@@ -120,7 +120,7 @@
             this.ElapsedTime.Font = new System.Drawing.Font("Courier New", 8.25F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
             this.ElapsedTime.FormattingEnabled = true;
             this.ElapsedTime.ItemHeight = 14;
-            this.ElapsedTime.Location = new System.Drawing.Point(29, 49);
+            this.ElapsedTime.Location = new System.Drawing.Point(30, 49);
             this.ElapsedTime.Name = "ElapsedTime";
             this.ElapsedTime.SelectionMode = System.Windows.Forms.SelectionMode.None;
             this.ElapsedTime.Size = new System.Drawing.Size(481, 14);
