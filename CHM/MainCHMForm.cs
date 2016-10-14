@@ -258,7 +258,7 @@ namespace CHM
 
             }
 
-            internal bool FullSetSystemFlag(string Name, string SubType, string Value, string SystemFlag_FlagType, string SystemFlag_FlagCatagory, string SystemFlag_ValidValues, string ActionInitatedBy)
+            internal bool FullSetSystemFlag(string Name, string SubType, string Value, string SystemFlag_FlagType, string SystemFlag_FlagCatagory, string SystemFlag_ValidValues, string ActionInitatedBy, bool Archive)
             {
                 FlagDataStruct SX;
                 string S = Name.Trim();
@@ -286,16 +286,20 @@ namespace CHM
                     SX.LastChangeHistory.ChangeTime = Now;
                     SX.LastChangeHistory.RawValue = SX.RawValue;
                     SX.LastChangeHistory.Value = SX.Value;
-
+                    SX.Archive = Archive;
                 }
 
-                if (IsItThere && (SX.Value != Value.Trim() || SX.MaxHistoryToSave != FlagChangeHistoryMaxSize))
+                if (IsItThere && (SX.Value != Value.Trim() || SX.Archive != Archive))
                 {
                     SX.Value = Value.Trim();
                     SX.RawValue = SX.Value;
                     SX.SystemFlag_FlagCatagory = SystemFlag_FlagType;
                     SX.SystemFlag_FlagType = SystemFlag_FlagCatagory;
                     SX.ValidValues = SystemFlag_ValidValues;
+                    SX.ChangedBy = ActionInitatedBy;
+                    SX.ChangeTick = Now;
+                    SX.Archive = Archive;
+
                     if (SX.MaxHistoryToSave > 0)
                     {
                         SX.LastChangeHistory = new FlagChangeHistory();
@@ -308,15 +312,39 @@ namespace CHM
                             SX.ChangeHistory.RemoveAt(0);
                     }
                     FlagsToDisplay.Enqueue(SX);
-                    if (Archiving)
-                        ArchiveFlagChangesQueue.Enqueue(SX);
+                    if (Archiving && ((!String.IsNullOrEmpty(SX.SourceUniqueID) && SX.SourceUniqueID.Substring(0, 1) == "D") || SX.Archive == true))
+                    {
+                        FlagArchiveStruct FAS = new FlagArchiveStruct();
+                        FAS.ChangeTick = SX.ChangeTick;
+                        FAS.CreateTick = SX.CreateTick;
+                        FAS.IsDeviceOffline = SX.IsDeviceOffline;
+                        FAS.Name = SX.Name;
+                        FAS.RawValue = SX.RawValue;
+                        FAS.RoomUniqueID = SX.RoomUniqueID;
+                        FAS.SourceUniqueID = SX.SourceUniqueID;
+                        FAS.SubType = SX.SubType;
+                        FAS.Value = SX.Value;
+                        ArchiveFlagChangesQueue.Enqueue(FAS);
+                    }
                 }
                 if (!IsItThere)
                 {
                     FlagDataDictionary.TryAdd(S.ToLower(), SX);
                     FlagsToDisplay.Enqueue(SX);
-                    if (Archiving)
-                        ArchiveFlagChangesQueue.Enqueue(SX);
+                    if (Archiving && ((!String.IsNullOrEmpty(SX.SourceUniqueID) && SX.SourceUniqueID.Substring(0, 1) == "D") || SX.Archive == true))
+                    {
+                        FlagArchiveStruct FAS = new FlagArchiveStruct();
+                        FAS.ChangeTick = SX.ChangeTick;
+                        FAS.CreateTick = SX.CreateTick;
+                        FAS.IsDeviceOffline = SX.IsDeviceOffline;
+                        FAS.Name = SX.Name;
+                        FAS.RawValue = SX.RawValue;
+                        FAS.RoomUniqueID = SX.RoomUniqueID;
+                        FAS.SourceUniqueID = SX.SourceUniqueID;
+                        FAS.SubType = SX.SubType;
+                        FAS.Value = SX.Value;
+                        ArchiveFlagChangesQueue.Enqueue(FAS);
+                    }
                 }
 
                 return (true);
@@ -332,6 +360,12 @@ namespace CHM
                 long Now = CurrentTick();
 
                 bool IsItThere = FlagDataDictionary.TryGetValue(S.ToLower(), out SX);
+                if (IsItThere)
+                {
+                    SX.ChangeMode = ChangeMode;
+                    SX.MaxHistoryToSave = MaxHistoryToSave;
+                }
+
                 if (!IsItThere)
                 {
                     SX = new FlagDataStruct();
@@ -356,7 +390,7 @@ namespace CHM
 
                 }
 
-                if (IsItThere && (SX.Value != Value.Trim() || SX.RawValue != RawValue || SX.ChangeMode != ChangeMode || SX.MaxHistoryToSave != MaxHistoryToSave || SX.UOM != UOM))
+                if (IsItThere && (SX.Value != Value.Trim() || SX.RawValue != RawValue || SX.UOM != UOM))
                 {
                     SX.Value = Value.Trim();
                     SX.RawValue = RawValue;
@@ -364,6 +398,9 @@ namespace CHM
                     SX.RoomUniqueID = Room;
                     SX.SourceUniqueID = SourceUnique;
                     SX.MaxHistoryToSave = MaxHistoryToSave;
+                    SX.ChangedBy = ActionInitatedBy;
+                    SX.ChangeTick = Now;
+
                     if (SX.MaxHistoryToSave > 0)
                     {
                         SX.LastChangeHistory = new FlagChangeHistory();
@@ -379,15 +416,39 @@ namespace CHM
                     SX.ValidValues = ValidValues;
                     SX.UOM = UOM;
                     FlagsToDisplay.Enqueue(SX);
-                    if (Archiving)
-                        ArchiveFlagChangesQueue.Enqueue(SX);
+                    if (Archiving && ((!String.IsNullOrEmpty(SX.SourceUniqueID) && SX.SourceUniqueID.Substring(0, 1) == "D") || SX.Archive == true))
+                    {
+                        FlagArchiveStruct FAS = new FlagArchiveStruct();
+                        FAS.ChangeTick = SX.ChangeTick;
+                        FAS.CreateTick = SX.CreateTick;
+                        FAS.IsDeviceOffline = SX.IsDeviceOffline;
+                        FAS.Name = SX.Name;
+                        FAS.RawValue = SX.RawValue;
+                        FAS.RoomUniqueID = SX.RoomUniqueID;
+                        FAS.SourceUniqueID = SX.SourceUniqueID;
+                        FAS.SubType = SX.SubType;
+                        FAS.Value = SX.Value;
+                        ArchiveFlagChangesQueue.Enqueue(FAS);
+                    }
                 }
                 if (!IsItThere)
                 {
                     FlagDataDictionary.TryAdd(S.ToLower(), SX);
                     FlagsToDisplay.Enqueue(SX);
-                    if (Archiving)
-                        ArchiveFlagChangesQueue.Enqueue(SX);
+                    if (Archiving && ((!String.IsNullOrEmpty(SX.SourceUniqueID) && SX.SourceUniqueID.Substring(0, 1) == "D") || SX.Archive == true))
+                    {
+                        FlagArchiveStruct FAS = new FlagArchiveStruct();
+                        FAS.ChangeTick = SX.ChangeTick;
+                        FAS.CreateTick = SX.CreateTick;
+                        FAS.IsDeviceOffline = SX.IsDeviceOffline;
+                        FAS.Name = SX.Name;
+                        FAS.RawValue = SX.RawValue;
+                        FAS.RoomUniqueID = SX.RoomUniqueID;
+                        FAS.SourceUniqueID = SX.SourceUniqueID;
+                        FAS.SubType = SX.SubType;
+                        FAS.Value = SX.Value;
+                        ArchiveFlagChangesQueue.Enqueue(FAS);
+                    }
                 }
                 return (true);
             }
@@ -424,8 +485,20 @@ namespace CHM
                 SX.UniqueID = Interlocked.Increment(ref UniqueCounter);
                 FlagDataDictionary.TryAdd(S.ToLower(), SX);
                 FlagsToDisplay.Enqueue(SX);
-                if (Archiving)
-                    ArchiveFlagChangesQueue.Enqueue(SX);
+                if (Archiving && ((!String.IsNullOrEmpty(SX.SourceUniqueID) && SX.SourceUniqueID.Substring(0, 1) == "D") || SX.Archive == true))
+                {
+                    FlagArchiveStruct FAS = new FlagArchiveStruct();
+                    FAS.ChangeTick = SX.ChangeTick;
+                    FAS.CreateTick = SX.CreateTick;
+                    FAS.IsDeviceOffline = SX.IsDeviceOffline;
+                    FAS.Name = SX.Name;
+                    FAS.RawValue = SX.RawValue;
+                    FAS.RoomUniqueID = SX.RoomUniqueID;
+                    FAS.SourceUniqueID = SX.SourceUniqueID;
+                    FAS.SubType = SX.SubType;
+                    FAS.Value = SX.Value;
+                    ArchiveFlagChangesQueue.Enqueue(FAS);
+                }
                 return (true);
             }
 
@@ -461,6 +534,9 @@ namespace CHM
                 long Now = CurrentTick();
 
                 bool IsItThere = FlagDataDictionary.TryGetValue(S.ToLower(), out SX);
+                if(IsItThere)
+                    SX.ChangeMode = ChangeMode;
+
                 if (!IsItThere)
                 {
                     SX = new FlagDataStruct();
@@ -484,11 +560,14 @@ namespace CHM
 
                 }
 
-                if (IsItThere && (SX.Value != Value.Trim() || SX.RawValue != RawValue || SX.ChangeMode != ChangeMode))
+                if (IsItThere && (SX.Value != Value.Trim() || SX.RawValue != RawValue))
                 {
                     SX.Value = Value.Trim();
                     SX.RawValue = RawValue;
                     SX.ChangeMode = ChangeMode;
+                    SX.ChangedBy = ActionInitatedBy;
+                    SX.ChangeTick = Now;
+
                     if (SX.MaxHistoryToSave > 0)
                     {
                         SX.LastChangeHistory = new FlagChangeHistory();
@@ -501,16 +580,40 @@ namespace CHM
                             SX.ChangeHistory.RemoveAt(0);
                     }
                     FlagsToDisplay.Enqueue(SX);
-                    if (Archiving)
-                        ArchiveFlagChangesQueue.Enqueue(SX);
+                    if (Archiving && ((!String.IsNullOrEmpty(SX.SourceUniqueID) && SX.SourceUniqueID.Substring(0, 1) == "D") || SX.Archive == true))
+                    {
+                        FlagArchiveStruct FAS = new FlagArchiveStruct();
+                        FAS.ChangeTick = SX.ChangeTick;
+                        FAS.CreateTick = SX.CreateTick;
+                        FAS.IsDeviceOffline = SX.IsDeviceOffline;
+                        FAS.Name = SX.Name;
+                        FAS.RawValue = SX.RawValue;
+                        FAS.RoomUniqueID = SX.RoomUniqueID;
+                        FAS.SourceUniqueID = SX.SourceUniqueID;
+                        FAS.SubType = SX.SubType;
+                        FAS.Value = SX.Value;
+                        ArchiveFlagChangesQueue.Enqueue(FAS);
+                    }
                 }
 
                 if (!IsItThere)
                 {
                     FlagDataDictionary.TryAdd(S.ToLower(), SX);
                     FlagsToDisplay.Enqueue(SX);
-                    if (Archiving)
-                        ArchiveFlagChangesQueue.Enqueue(SX);
+                    if (Archiving && ((!String.IsNullOrEmpty(SX.SourceUniqueID) && SX.SourceUniqueID.Substring(0, 1) == "D") || SX.Archive == true))
+                    {
+                        FlagArchiveStruct FAS = new FlagArchiveStruct();
+                        FAS.ChangeTick = SX.ChangeTick;
+                        FAS.CreateTick = SX.CreateTick;
+                        FAS.IsDeviceOffline = SX.IsDeviceOffline;
+                        FAS.Name = SX.Name;
+                        FAS.RawValue = SX.RawValue;
+                        FAS.RoomUniqueID = SX.RoomUniqueID;
+                        FAS.SourceUniqueID = SX.SourceUniqueID;
+                        FAS.SubType = SX.SubType;
+                        FAS.Value = SX.Value;
+                        ArchiveFlagChangesQueue.Enqueue(FAS);
+                    }
                 }
                 return (true);
             }
@@ -524,6 +627,12 @@ namespace CHM
                 long Now = CurrentTick();
 
                 bool IsItThere = FlagDataDictionary.TryGetValue(S.ToLower(), out SX);
+                if (IsItThere)
+                {
+                    SX.ChangeMode = ChangeMode;
+                    SX.MaxHistoryToSave = MaxHistoryToSave;
+                }
+
                 if (!IsItThere)
                 {
                     SX = new FlagDataStruct();
@@ -547,11 +656,14 @@ namespace CHM
 
                 }
 
-                if (IsItThere && (SX.Value != Value.Trim() || SX.RawValue != RawValue || SX.ChangeMode != ChangeMode || SX.MaxHistoryToSave != MaxHistoryToSave))
+                if (IsItThere && (SX.Value != Value.Trim() || SX.RawValue != RawValue))
                 {
                     SX.Value = Value.Trim();
                     SX.RawValue = RawValue;
                     SX.ChangeMode = ChangeMode;
+                    SX.ChangedBy = ActionInitatedBy;
+                    SX.ChangeTick = Now;
+
                     if (SX.MaxHistoryToSave > 0)
                     {
                         SX.LastChangeHistory = new FlagChangeHistory();
@@ -564,16 +676,40 @@ namespace CHM
                             SX.ChangeHistory.RemoveAt(0);
                     }
                     FlagsToDisplay.Enqueue(SX);
-                    if (Archiving)
-                        ArchiveFlagChangesQueue.Enqueue(SX);
+                    if (Archiving && ((!String.IsNullOrEmpty(SX.SourceUniqueID) && SX.SourceUniqueID.Substring(0, 1) == "D") || SX.Archive == true))
+                    {
+                        FlagArchiveStruct FAS = new FlagArchiveStruct();
+                        FAS.ChangeTick = SX.ChangeTick;
+                        FAS.CreateTick = SX.CreateTick;
+                        FAS.IsDeviceOffline = SX.IsDeviceOffline;
+                        FAS.Name = SX.Name;
+                        FAS.RawValue = SX.RawValue;
+                        FAS.RoomUniqueID = SX.RoomUniqueID;
+                        FAS.SourceUniqueID = SX.SourceUniqueID;
+                        FAS.SubType = SX.SubType;
+                        FAS.Value = SX.Value;
+                        ArchiveFlagChangesQueue.Enqueue(FAS);
+                    }
                 }
 
                 if (!IsItThere)
                 {
                     FlagDataDictionary.TryAdd(S.ToLower(), SX);
                     FlagsToDisplay.Enqueue(SX);
-                    if (Archiving)
-                        ArchiveFlagChangesQueue.Enqueue(SX);
+                    if (Archiving && ((!String.IsNullOrEmpty(SX.SourceUniqueID) && SX.SourceUniqueID.Substring(0, 1) == "D") || SX.Archive == true))
+                    {
+                        FlagArchiveStruct FAS = new FlagArchiveStruct();
+                        FAS.ChangeTick = SX.ChangeTick;
+                        FAS.CreateTick = SX.CreateTick;
+                        FAS.IsDeviceOffline = SX.IsDeviceOffline;
+                        FAS.Name = SX.Name;
+                        FAS.RawValue = SX.RawValue;
+                        FAS.RoomUniqueID = SX.RoomUniqueID;
+                        FAS.SourceUniqueID = SX.SourceUniqueID;
+                        FAS.SubType = SX.SubType;
+                        FAS.Value = SX.Value;
+                        ArchiveFlagChangesQueue.Enqueue(FAS);
+                    }
                 }
                 return (true);
             }
@@ -1061,7 +1197,7 @@ namespace CHM
         internal ConcurrentQueue<string> SavedMessageQueue;
         internal ConcurrentQueue<string> ErrorMessageQueue;
         internal ConcurrentQueue<string> DebugMessageQueue;
-        internal static ConcurrentQueue<FlagDataStruct> ArchiveFlagChangesQueue;
+        internal static ConcurrentQueue<FlagArchiveStruct> ArchiveFlagChangesQueue;
         internal ConcurrentQueue<PluginServerDataStruct> ServerToPluginQueue;
         internal ConcurrentQueue<Tuple<PluginIncedentFlags, object>> IncedentFlagQueue;
         static internal ConcurrentDictionary<string, PluginStruct> PluginDictionary;
@@ -1270,7 +1406,7 @@ namespace CHM
             EvalMathFunctions = new CHMPluginAPI.EvalFunctions();
             //                ev.AddEnvironmentFunctions(this);
             ev.AddEnvironmentFunctions(EvalMathFunctions);
-            ArchiveFlagChangesQueue = new ConcurrentQueue<FlagDataStruct>();
+            ArchiveFlagChangesQueue = new ConcurrentQueue<FlagArchiveStruct>();
 
 
             //ConfigureNLP();
@@ -2001,10 +2137,6 @@ namespace CHM
             IncedentFlagTimer.Interval = SysData.GetValueInt("IncedentFlagTimer", 100);
             IncedentFlagTimer.Enabled = true;
             
-            ArchiveTimer = new System.Timers.Timer(SysData.GetValueInt("ArchiveTimeslice", 10000));
-            ArchiveTimer.Elapsed += new ElapsedEventHandler(ArchiveTimerProcess);
-            ArchiveTimer.Interval = SysData.GetValueInt("ArchiveTimeslice", 10000);
-            ArchiveTimer.Enabled = true;
         }
 
         #endregion
@@ -2062,29 +2194,6 @@ namespace CHM
             DisplayTimer.Enabled = true;
             return;
         }
-
-        internal void ArchiveTimerProcess(object source, ElapsedEventArgs e)
-        {
-            if (Archiving)
-            {
-                ArchiveTimer.Enabled = false;
-                FlagDataStruct Flag;
-                List<FlagDataStruct> FL = new List<FlagDataStruct>();
-                while (ArchiveFlagChangesQueue.TryDequeue(out Flag))
-                {
-                    FL.Add(Flag);
-                }
-                PluginStruct PluginProcess;
-
-                if (PluginDictionary.TryGetValue(ArchiveDLL, out PluginProcess))
-                {
-                    object[] FlagSet = new object[] { FL.ToArray() };
-                    PluginProcess.ServerAssemblyType.InvokeMember("CHMAPI_FlagCommingFromServer", BindingFlags.InvokeMethod, null, PluginProcess.ServerInstance, FlagSet);
-                }
-                ArchiveTimer.Enabled = true;
-            }
-        }
-
 
         internal void IncedentFlagTimerProcess(object source, ElapsedEventArgs e)
         {
@@ -3366,7 +3475,7 @@ namespace CHM
 
             while (SystemFlagsValidData)
             {
-                bool flag = FlagAccess.FullSetSystemFlag(SystemFlags[2], "", SystemFlags[3], SystemFlags[0], SystemFlags[1], SystemFlags[4], MODULESERIALNUMBER);
+                bool flag = FlagAccess.FullSetSystemFlag(SystemFlags[2], "", SystemFlags[3], SystemFlags[0], SystemFlags[1], SystemFlags[4], MODULESERIALNUMBER, true);
                 SystemFlagStruct SFD = new SystemFlagStruct();
                 SFD.FlagType = SystemFlags[0];
                 SFD.FlagCatagory = SystemFlags[1];
@@ -3684,6 +3793,22 @@ namespace CHM
                 try
                 {
                     PluginData.ServerAssemblyType.InvokeMember("CHMAPI_StartupInfoFromServer", BindingFlags.InvokeMethod, null, PluginData.ServerInstance, new object[] { stuff });
+                }
+                catch (Exception err)
+                {
+                    PluginDictionary.TryAdd(SA[0], PluginData);
+                    PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), MODULESERIALNUMBER, 51, err.Message, " (" + PluginData.PluginName + ") " + err.StackTrace));
+                    return;
+                }
+
+
+                try
+                {
+                    if (PluginData.PluginName==ArchiveDLL)
+                    {
+                        object[] FlagSet = new object[] { ArchiveFlagChangesQueue };
+                        PluginData.ServerAssemblyType.InvokeMember("CHMAPI_QueuesCommingFromServer", BindingFlags.InvokeMethod, null, PluginData.ServerInstance, new object[] { FlagSet });
+                    }
                 }
                 catch (Exception err)
                 {
