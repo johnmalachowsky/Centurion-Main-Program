@@ -63,6 +63,7 @@
             this.ActionItemsListBox = new System.Windows.Forms.ListBox();
             this.label6 = new System.Windows.Forms.Label();
             this.UserInterfaceButton = new System.Windows.Forms.Button();
+            this.EventsItemsListBox = new System.Windows.Forms.ListBox();
             this.MainMenu.SuspendLayout();
             this.ImmediateCommandResponsePanel.SuspendLayout();
             this.SuspendLayout();
@@ -72,13 +73,13 @@
             this.CHMMainFormMessageBox.FormattingEnabled = true;
             this.CHMMainFormMessageBox.Location = new System.Drawing.Point(12, 201);
             this.CHMMainFormMessageBox.Name = "CHMMainFormMessageBox";
-            this.CHMMainFormMessageBox.Size = new System.Drawing.Size(1036, 121);
+            this.CHMMainFormMessageBox.Size = new System.Drawing.Size(1091, 121);
             this.CHMMainFormMessageBox.TabIndex = 0;
             this.CHMMainFormMessageBox.DoubleClick += new System.EventHandler(this.CHMMainFormMessageBox_DoubleClick);
             // 
             // Exit
             // 
-            this.Exit.Location = new System.Drawing.Point(992, 27);
+            this.Exit.Location = new System.Drawing.Point(1109, 24);
             this.Exit.Name = "Exit";
             this.Exit.Size = new System.Drawing.Size(56, 39);
             this.Exit.TabIndex = 1;
@@ -99,7 +100,7 @@
             this.PluginStatus.ItemHeight = 14;
             this.PluginStatus.Location = new System.Drawing.Point(15, 87);
             this.PluginStatus.Name = "PluginStatus";
-            this.PluginStatus.Size = new System.Drawing.Size(387, 88);
+            this.PluginStatus.Size = new System.Drawing.Size(412, 88);
             this.PluginStatus.Sorted = true;
             this.PluginStatus.TabIndex = 2;
             // 
@@ -108,9 +109,9 @@
             this.TimeSliceStatus.Font = new System.Drawing.Font("Courier New", 8.25F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
             this.TimeSliceStatus.FormattingEnabled = true;
             this.TimeSliceStatus.ItemHeight = 14;
-            this.TimeSliceStatus.Location = new System.Drawing.Point(405, 88);
+            this.TimeSliceStatus.Location = new System.Drawing.Point(433, 87);
             this.TimeSliceStatus.Name = "TimeSliceStatus";
-            this.TimeSliceStatus.Size = new System.Drawing.Size(252, 88);
+            this.TimeSliceStatus.Size = new System.Drawing.Size(284, 88);
             this.TimeSliceStatus.TabIndex = 3;
             // 
             // ElapsedTime
@@ -129,7 +130,7 @@
             // label1
             // 
             this.label1.AutoSize = true;
-            this.label1.Location = new System.Drawing.Point(133, 71);
+            this.label1.Location = new System.Drawing.Point(159, 71);
             this.label1.Name = "label1";
             this.label1.Size = new System.Drawing.Size(143, 13);
             this.label1.TabIndex = 5;
@@ -138,7 +139,7 @@
             // label2
             // 
             this.label2.AutoSize = true;
-            this.label2.Location = new System.Drawing.Point(457, 72);
+            this.label2.Location = new System.Drawing.Point(495, 71);
             this.label2.Name = "label2";
             this.label2.Size = new System.Drawing.Size(145, 13);
             this.label2.TabIndex = 6;
@@ -147,7 +148,7 @@
             // label3
             // 
             this.label3.AutoSize = true;
-            this.label3.Location = new System.Drawing.Point(412, 185);
+            this.label3.Location = new System.Drawing.Point(527, 185);
             this.label3.Name = "label3";
             this.label3.Size = new System.Drawing.Size(55, 13);
             this.label3.TabIndex = 7;
@@ -169,9 +170,10 @@
             this.FlagBox.ItemHeight = 14;
             this.FlagBox.Location = new System.Drawing.Point(12, 349);
             this.FlagBox.Name = "FlagBox";
-            this.FlagBox.Size = new System.Drawing.Size(1036, 116);
+            this.FlagBox.Size = new System.Drawing.Size(838, 116);
             this.FlagBox.Sorted = true;
             this.FlagBox.TabIndex = 8;
+            this.FlagBox.UseTabStops = false;
             this.FlagBox.DoubleClick += new System.EventHandler(this.FlagBox_DoubleClick);
             // 
             // MainMenu
@@ -181,7 +183,7 @@
             this.ToolsToolStripMenuItem});
             this.MainMenu.Location = new System.Drawing.Point(0, 0);
             this.MainMenu.Name = "MainMenu";
-            this.MainMenu.Size = new System.Drawing.Size(1060, 24);
+            this.MainMenu.Size = new System.Drawing.Size(1177, 24);
             this.MainMenu.TabIndex = 13;
             this.MainMenu.Text = "menuStrip1";
             // 
@@ -353,7 +355,7 @@
             // 
             this.ActionItemsListBox.BackColor = System.Drawing.Color.Yellow;
             this.ActionItemsListBox.FormattingEnabled = true;
-            this.ActionItemsListBox.Location = new System.Drawing.Point(668, 92);
+            this.ActionItemsListBox.Location = new System.Drawing.Point(723, 87);
             this.ActionItemsListBox.Name = "ActionItemsListBox";
             this.ActionItemsListBox.Size = new System.Drawing.Size(380, 82);
             this.ActionItemsListBox.TabIndex = 23;
@@ -361,7 +363,7 @@
             // label6
             // 
             this.label6.AutoSize = true;
-            this.label6.Location = new System.Drawing.Point(820, 71);
+            this.label6.Location = new System.Drawing.Point(874, 71);
             this.label6.Name = "label6";
             this.label6.Size = new System.Drawing.Size(65, 13);
             this.label6.TabIndex = 24;
@@ -369,7 +371,7 @@
             // 
             // UserInterfaceButton
             // 
-            this.UserInterfaceButton.Location = new System.Drawing.Point(908, 27);
+            this.UserInterfaceButton.Location = new System.Drawing.Point(1042, 24);
             this.UserInterfaceButton.Name = "UserInterfaceButton";
             this.UserInterfaceButton.Size = new System.Drawing.Size(61, 39);
             this.UserInterfaceButton.TabIndex = 25;
@@ -377,13 +379,27 @@
             this.UserInterfaceButton.UseVisualStyleBackColor = true;
             this.UserInterfaceButton.Click += new System.EventHandler(this.UserInterfaceButton_Click);
             // 
+            // EventsItemsListBox
+            // 
+            this.EventsItemsListBox.BackColor = System.Drawing.Color.Goldenrod;
+            this.EventsItemsListBox.Font = new System.Drawing.Font("Courier New", 8.25F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.EventsItemsListBox.FormattingEnabled = true;
+            this.EventsItemsListBox.ItemHeight = 14;
+            this.EventsItemsListBox.Location = new System.Drawing.Point(856, 349);
+            this.EventsItemsListBox.Name = "EventsItemsListBox";
+            this.EventsItemsListBox.Size = new System.Drawing.Size(309, 116);
+            this.EventsItemsListBox.Sorted = true;
+            this.EventsItemsListBox.TabIndex = 26;
+            this.EventsItemsListBox.UseTabStops = false;
+            // 
             // MainCHMForm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.AutoValidate = System.Windows.Forms.AutoValidate.EnableAllowFocusChange;
             this.CausesValidation = false;
-            this.ClientSize = new System.Drawing.Size(1060, 653);
+            this.ClientSize = new System.Drawing.Size(1177, 653);
+            this.Controls.Add(this.EventsItemsListBox);
             this.Controls.Add(this.UserInterfaceButton);
             this.Controls.Add(this.label6);
             this.Controls.Add(this.ActionItemsListBox);
@@ -454,6 +470,7 @@
         private System.Windows.Forms.ListBox ActionItemsListBox;
         private System.Windows.Forms.Label label6;
         private System.Windows.Forms.Button UserInterfaceButton;
+        private System.Windows.Forms.ListBox EventsItemsListBox;
     }
 }
 

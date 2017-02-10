@@ -12,7 +12,7 @@ namespace CHM
     class DatabaseAccess
     {
 
-        private const string DATABASEQUOTE = "\"";
+        internal const string DATABASEQUOTE = "\"";
         protected struct DatabaseData
         {
             internal bool MainDBOpen;
@@ -433,7 +433,7 @@ namespace CHM
         internal bool AddorUpdateConfiguration(string ModuleSerialNumber, string FieldName, string Value, char ValueType)
         {
 
-            string S = "insert or replace into Configuration values (" + DATABASEQUOTE + ModuleSerialNumber + DATABASEQUOTE + "," + DATABASEQUOTE + FieldName + DATABASEQUOTE + "," + DATABASEQUOTE + Value + DATABASEQUOTE+ "," + DATABASEQUOTE + ValueType + DATABASEQUOTE+")";
+            string S = "insert or replace into Configuration values (" + DATABASEQUOTE + ModuleSerialNumber + DATABASEQUOTE + "," + DATABASEQUOTE + FieldName + DATABASEQUOTE + "," + DATABASEQUOTE + DATABASEQUOTE + "," + DATABASEQUOTE + Value + DATABASEQUOTE+ "," + DATABASEQUOTE + ValueType + DATABASEQUOTE+")";
             try
             {
                 SQLiteCommand mycommand = new SQLiteCommand(S, DBData.MainDB);
@@ -451,6 +451,54 @@ namespace CHM
         {
             return (ExecuteSQLCommandWithReaderandFields(TableName, "*", Conditions, out ValidData));
         }
+
+
+        internal SQLiteDataReader ExecuteSQLCommandWithReader(string TableName, string[] KeyFields, string[] KeyValues, out bool ValidData )
+        {
+            try
+            {
+                if (VerifyIfTableExists(TableName) == false)
+                {
+                    ValidData = false;
+                    return (null);
+                }
+                if (KeyFields.Length == 0 || KeyValues.Length == 0 || KeyFields.Length != KeyValues.Length)
+                {
+                    ValidData = false;
+                    return (null);
+                }
+
+                string DBstmt = "";
+                for (int i = 0; i < KeyFields.Length; i++)
+                {
+                    if (string.IsNullOrEmpty(KeyValues[i]) || string.IsNullOrEmpty(KeyFields[i]))
+                        continue;
+
+                    if (DBstmt.Length > 0)
+                        DBstmt = DBstmt + " and ";
+
+                    DBstmt = DBstmt + DATABASEQUOTE + KeyFields[i] + DATABASEQUOTE + " = " + DATABASEQUOTE + KeyValues[i] + DATABASEQUOTE + " COLLATE NOCASE ";
+                }
+                SQLiteCommand mycommand = new SQLiteCommand(DBData.MainDB);
+                mycommand.CommandText = "Select * from " + TableName + " where " + DBstmt;
+                SQLiteDataReader reader = mycommand.ExecuteReader();
+                if (!reader.HasRows)
+                {
+                    reader.Close();
+                    ValidData = false;
+                    return (null);
+                }
+                ValidData = true;
+                return (reader);
+            }
+            catch (Exception err)
+            {
+                LastError = err.Message;
+                ValidData = false;
+                return (null);
+            }
+        }
+
 
 
         internal SQLiteDataReader ExecuteSQLCommandWithReaderandFields(string TableName, string fields, string Conditions, out bool ValidData)
@@ -763,7 +811,7 @@ namespace CHM
                     if (DBstmt.Length > 0)
                         DBstmt = DBstmt + " and ";
 
-                    DBstmt = DBstmt + DATABASEQUOTE + KeyFields[i] + DATABASEQUOTE + " = " + DATABASEQUOTE + KeyValues[i] + DATABASEQUOTE;
+                    DBstmt = DBstmt + DATABASEQUOTE + KeyFields[i] + DATABASEQUOTE + " = " + DATABASEQUOTE + KeyValues[i] + DATABASEQUOTE+ " COLLATE NOCASE ";
                 }
                 SQLiteCommand mycommand = new SQLiteCommand(DBData.MainDB);
                 mycommand.CommandText = "Select * from " + TableName + " where " + DBstmt;

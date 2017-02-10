@@ -32,6 +32,7 @@
             this.Display = new System.Windows.Forms.Button();
             this.All = new System.Windows.Forms.Button();
             this.SelectionBox = new System.Windows.Forms.GroupBox();
+            this.RBSetable = new System.Windows.Forms.RadioButton();
             this.RBSensors = new System.Windows.Forms.RadioButton();
             this.RBDevices = new System.Windows.Forms.RadioButton();
             this.RBAll = new System.Windows.Forms.RadioButton();
@@ -67,19 +68,32 @@
             // 
             // SelectionBox
             // 
+            this.SelectionBox.Controls.Add(this.RBSetable);
             this.SelectionBox.Controls.Add(this.RBSensors);
             this.SelectionBox.Controls.Add(this.RBDevices);
             this.SelectionBox.Controls.Add(this.RBAll);
             this.SelectionBox.Location = new System.Drawing.Point(251, -2);
             this.SelectionBox.Name = "SelectionBox";
-            this.SelectionBox.Size = new System.Drawing.Size(187, 29);
+            this.SelectionBox.Size = new System.Drawing.Size(254, 29);
             this.SelectionBox.TabIndex = 6;
             this.SelectionBox.TabStop = false;
+            // 
+            // RBSetable
+            // 
+            this.RBSetable.AutoSize = true;
+            this.RBSetable.Checked = true;
+            this.RBSetable.Location = new System.Drawing.Point(186, 12);
+            this.RBSetable.Name = "RBSetable";
+            this.RBSetable.Size = new System.Drawing.Size(61, 17);
+            this.RBSetable.TabIndex = 9;
+            this.RBSetable.TabStop = true;
+            this.RBSetable.Text = "Setable";
+            this.RBSetable.UseVisualStyleBackColor = true;
             // 
             // RBSensors
             // 
             this.RBSensors.AutoSize = true;
-            this.RBSensors.Location = new System.Drawing.Point(117, 11);
+            this.RBSensors.Location = new System.Drawing.Point(117, 12);
             this.RBSensors.Name = "RBSensors";
             this.RBSensors.Size = new System.Drawing.Size(63, 17);
             this.RBSensors.TabIndex = 8;
@@ -89,7 +103,7 @@
             // RBDevices
             // 
             this.RBDevices.AutoSize = true;
-            this.RBDevices.Location = new System.Drawing.Point(50, 10);
+            this.RBDevices.Location = new System.Drawing.Point(50, 12);
             this.RBDevices.Name = "RBDevices";
             this.RBDevices.Size = new System.Drawing.Size(64, 17);
             this.RBDevices.TabIndex = 7;
@@ -99,12 +113,10 @@
             // RBAll
             // 
             this.RBAll.AutoSize = true;
-            this.RBAll.Checked = true;
-            this.RBAll.Location = new System.Drawing.Point(8, 10);
+            this.RBAll.Location = new System.Drawing.Point(8, 12);
             this.RBAll.Name = "RBAll";
             this.RBAll.Size = new System.Drawing.Size(36, 17);
             this.RBAll.TabIndex = 6;
-            this.RBAll.TabStop = true;
             this.RBAll.Text = "All";
             this.RBAll.UseVisualStyleBackColor = true;
             // 
@@ -113,7 +125,7 @@
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.AutoScroll = true;
-            this.ClientSize = new System.Drawing.Size(445, 35);
+            this.ClientSize = new System.Drawing.Size(511, 35);
             this.Controls.Add(this.SelectionBox);
             this.Controls.Add(this.All);
             this.Controls.Add(this.Display);
@@ -136,5 +148,6 @@
         private System.Windows.Forms.RadioButton RBDevices;
         private System.Windows.Forms.RadioButton RBAll;
         internal System.Windows.Forms.GroupBox SelectionBox;
+        private System.Windows.Forms.RadioButton RBSetable;
     }
 }

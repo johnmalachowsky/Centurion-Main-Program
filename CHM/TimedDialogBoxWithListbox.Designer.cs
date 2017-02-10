@@ -31,6 +31,7 @@
             this.TimedDialogBoxStuff = new System.Windows.Forms.Label();
             this.TDBWL_Button = new System.Windows.Forms.Button();
             this.TDBWL_listBox = new System.Windows.Forms.ListBox();
+            this.TDBWL_Button2 = new System.Windows.Forms.Button();
             this.SuspendLayout();
             // 
             // TimedDialogBoxStuff
@@ -45,9 +46,9 @@
             // TDBWL_Button
             // 
             this.TDBWL_Button.Anchor = System.Windows.Forms.AnchorStyles.Bottom;
-            this.TDBWL_Button.Location = new System.Drawing.Point(119, 219);
+            this.TDBWL_Button.Location = new System.Drawing.Point(41, 214);
             this.TDBWL_Button.Name = "TDBWL_Button";
-            this.TDBWL_Button.Size = new System.Drawing.Size(81, 32);
+            this.TDBWL_Button.Size = new System.Drawing.Size(81, 43);
             this.TDBWL_Button.TabIndex = 2;
             this.TDBWL_Button.Text = "Done";
             this.TDBWL_Button.UseVisualStyleBackColor = true;
@@ -56,11 +57,23 @@
             // TDBWL_listBox
             // 
             this.TDBWL_listBox.FormattingEnabled = true;
-            this.TDBWL_listBox.Location = new System.Drawing.Point(12, 79);
+            this.TDBWL_listBox.Location = new System.Drawing.Point(12, 63);
             this.TDBWL_listBox.Name = "TDBWL_listBox";
             this.TDBWL_listBox.ScrollAlwaysVisible = true;
             this.TDBWL_listBox.Size = new System.Drawing.Size(322, 134);
             this.TDBWL_listBox.TabIndex = 3;
+            // 
+            // TDBWL_Button2
+            // 
+            this.TDBWL_Button2.Anchor = System.Windows.Forms.AnchorStyles.Bottom;
+            this.TDBWL_Button2.Location = new System.Drawing.Point(166, 214);
+            this.TDBWL_Button2.Name = "TDBWL_Button2";
+            this.TDBWL_Button2.Size = new System.Drawing.Size(81, 43);
+            this.TDBWL_Button2.TabIndex = 4;
+            this.TDBWL_Button2.Text = "Save Listbox As Log File";
+            this.TDBWL_Button2.UseVisualStyleBackColor = true;
+            this.TDBWL_Button2.Visible = false;
+            this.TDBWL_Button2.Click += new System.EventHandler(this.TDBWL_Button2_Click);
             // 
             // TimedDialogBoxWithListbox
             // 
@@ -68,6 +81,7 @@
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.AutoSize = true;
             this.ClientSize = new System.Drawing.Size(346, 261);
+            this.Controls.Add(this.TDBWL_Button2);
             this.Controls.Add(this.TDBWL_listBox);
             this.Controls.Add(this.TDBWL_Button);
             this.Controls.Add(this.TimedDialogBoxStuff);
@@ -90,5 +104,6 @@
         private System.Windows.Forms.Label TimedDialogBoxStuff;
         private System.Windows.Forms.Button TDBWL_Button;
         private System.Windows.Forms.ListBox TDBWL_listBox;
+        private System.Windows.Forms.Button TDBWL_Button2;
     }
 }

@@ -33,9 +33,24 @@ namespace CHM
         private void TimedDialogBox_Shown(object sender, EventArgs e)
         {
             this.Text = T_Title;
-            for (int i=150; i < T_Message.Length; i=i+150)
+            bool split = true;
+            while (split)
             {
-                T_Message = T_Message.Substring(0,i) + "\r\n" + T_Message.Substring(i);
+                string[] lines = T_Message.Split("\r\n".ToCharArray(), StringSplitOptions.RemoveEmptyEntries);
+                split = false;
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    if (lines[i].Length > 150)
+                    {
+                        lines[i] = lines[i].Substring(0, 150) + "\r\n" + lines[i].Substring(150);
+                        split = true;
+                    }
+                }
+                T_Message = "";
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    T_Message = T_Message + lines[i] + "\r\n";
+                }
             }
             TimedDialogBoxStuff.Text = T_Message;
  

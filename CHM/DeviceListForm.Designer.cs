@@ -46,6 +46,7 @@
             this.Close.TabIndex = 0;
             this.Close.Text = "Close";
             this.Close.UseVisualStyleBackColor = true;
+            this.Close.Click += new System.EventHandler(this.Close_Click);
             // 
             // Save
             // 
@@ -55,6 +56,7 @@
             this.Save.TabIndex = 1;
             this.Save.Text = "Save";
             this.Save.UseVisualStyleBackColor = true;
+            this.Save.Visible = false;
             // 
             // DeviceListForm
             // 

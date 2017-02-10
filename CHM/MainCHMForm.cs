@@ -21,6 +21,9 @@ using Eval3;
 
 using CHMPluginAPICommon;
 using System.Text.RegularExpressions;
+using System.Runtime.InteropServices;
+using System.Net;
+using System.Net.Sockets;
 
 
 
@@ -45,13 +48,106 @@ namespace CHM
 
     internal partial class MainCHMForm : Form
     {
-        #region Special Classes
+        #region Application Recovery and Restart
+        [Flags]
+        public enum RestartRestrictions
+        {
+            None = 0,
+            NotOnCrash = 1,
+            NotOnHang = 2,
+            NotOnPatch = 4,
+            NotOnReboot = 8
+        }
 
+        public delegate int RecoveryDelegate(RecoveryData parameter);
+
+        public static class ArrImports
+        {
+            [DllImport("kernel32.dll")]
+            public static extern void ApplicationRecoveryFinished(
+                bool success);
+
+            [DllImport("kernel32.dll")]
+            public static extern int ApplicationRecoveryInProgress(
+                out bool canceled);
+
+            [DllImport("kernel32.dll")]
+            public static extern int GetApplicationRecoveryCallback(
+                IntPtr processHandle,
+                out RecoveryDelegate recoveryCallback,
+                out RecoveryData parameter,
+                out uint pingInterval,
+                out uint flags);
+
+            [DllImport("KERNEL32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+            public static extern int GetApplicationRestartSettings(
+                IntPtr process,
+                IntPtr commandLine,
+                ref uint size,
+                out uint flags);
+
+            [DllImport("kernel32.dll")]
+            public static extern int RegisterApplicationRecoveryCallback(
+                RecoveryDelegate recoveryCallback,
+                RecoveryData parameter,
+                uint pingInterval,
+                uint flags);
+
+            [DllImport("kernel32.dll")]
+            public static extern int RegisterApplicationRestart(
+                [MarshalAs(UnmanagedType.BStr)] string commandLineArgs,
+                int flags);
+
+            //[DllImport("kernel32.dll")]
+            //public static extern int UnregisterApplicationRecoveryCallback();
+
+            //[DllImport("kernel32.dll")]
+            //public static extern int UnregisterApplicationRestart();
+
+            [DllImport("kernel32.dll")]
+            public static extern void RaiseException(uint dwExceptionCode, uint dwExceptionFlags, uint nNumberOfArguments, IntPtr lpArguments);
+        }
+
+        public class RecoveryData
+        {
+            string currentUser;
+
+            public RecoveryData(string who)
+            {
+                currentUser = who;
+            }
+            public string CurrentUser
+            {
+                get { return currentUser; }
+            }
+        }
+
+        internal void CauseSystemCrash()
+        {
+            object p = 0;
+            IntPtr pnt = (IntPtr)0x123456789;
+            Marshal.StructureToPtr(p, pnt, false);
+        }
+        #endregion
+
+
+        #region Special Classes
         internal class FlagData
         {
 
 
             static internal ConcurrentDictionary<string, FlagDataStruct> FlagDataDictionary;
+            internal class EventsStruct
+            {
+                public string Name;
+                public string OwnerDll;
+                public string Value;
+                public DateTime EventTime;
+                public DateTime LastUpdate;
+            }
+
+
+            static internal ConcurrentDictionary<string, EventsStruct> EventsDataDictionary;
             static private ConcurrentQueue<FlagDataStruct> FlagsToDisplay;
             static private ConcurrentQueue<Tuple<string,string, string>> FlagsToDelete;
             static internal Func<long> CurrentTick;
@@ -59,20 +155,53 @@ namespace CHM
             static internal MainCHMForm MF;
             static internal Int64 UniqueCounter = 0;
             static internal int FlagChangeHistoryMaxSize = 1000;
+            static private ListBox _ActionItemsListbox, _EventsListBox;
 
-            internal FlagData(Func<long> CurrentTickMethod, SystemData Sdt)
+            internal FlagData(Func<long> CurrentTickMethod, SystemData Sdt, ListBox ActionItemsListbox, ListBox EventsListBox)
             {
                 FlagDataDictionary = new ConcurrentDictionary<string, FlagDataStruct>();
+                EventsDataDictionary = new ConcurrentDictionary<string, EventsStruct>();
                 FlagsToDisplay = new ConcurrentQueue<FlagDataStruct>();
                 FlagsToDelete = new ConcurrentQueue<Tuple<string, string, string>>();
                 CurrentTick = CurrentTickMethod;
                 SysData = Sdt;
                 MF = new MainCHMForm();
+                _ActionItemsListbox = ActionItemsListbox;
+                _EventsListBox = EventsListBox;
             }
 
             internal FlagData()
             {
             }
+
+            internal bool AddOrUpdateEventData(string Name, string Owner, string Value, DateTime EventTime)
+            {
+                EventsStruct EV;
+                if(EventsDataDictionary.TryGetValue(Name.ToLower(), out EV))
+                {
+                    EV.OwnerDll = Owner;
+                    EV.Value = Value;
+                    EV.EventTime = EventTime;
+                    EV.LastUpdate = _GetCurrentDateTime();
+                    EventsItemsListBoxQueue.Enqueue(new Tuple<string, ListBox, string, string>(Name + " " + Value + " " + EventTime.ToString("HH':'mm':'ss MM'/'dd'/'yyyy"), _EventsListBox, Name, Name));
+                    return (false);
+                }
+                else
+                {
+                    EV = new EventsStruct();
+                    EV.Name = Name;
+                    EV.OwnerDll = Owner;
+                    EV.Value = Value;
+                    EV.EventTime = EventTime;
+                    EV.LastUpdate = _GetCurrentDateTime();
+                    EventsDataDictionary.TryAdd(Name.ToLower(), EV);
+                    EventsItemsListBoxQueue.Enqueue(new Tuple<string, ListBox, string, string>(Name + " " + Value + " " + EventTime.ToString("HH':'mm':'ss MM'/'dd'/'yyyy"), _EventsListBox, Name, Name));
+                    return (true);
+                }
+
+
+            }
+
 
 
             internal bool GetFlagsToDeleteValues(out Tuple<string, string,string> NameOfFlagToDelete)
@@ -178,6 +307,14 @@ namespace CHM
 
             internal string GetValue(string Name, string SubType, out string RawData)
             {
+
+                if (Name.Substring(0, 2) == "$$")
+                {
+                    string SV;
+                    GetSpecialFlagInfo(Name, out SV, out RawData);
+                    return (SV);
+                }
+
                 FlagDataStruct SX;
                 string S = Name;
                 if (!string.IsNullOrEmpty(SubType))
@@ -235,7 +372,7 @@ namespace CHM
             internal bool FlagValidityCheck(string Flag, string plugin)
             {
                 FlagDataStruct SX;
-                if (!FlagDataDictionary.TryGetValue(Flag.ToLower(), out SX))
+                if (!FlagDataDictionary.TryGetValue(Flag.ToLower().Trim(), out SX))
                     return (true);
                 if (SX.ChangeMode != FlagChangeCodes.OwnerOnly || (SX.ChangeMode == FlagChangeCodes.OwnerOnly && SX.CreatedBy == plugin))
                     return (true);
@@ -258,6 +395,103 @@ namespace CHM
 
             }
 
+            internal bool ChangeFlagArchiveStatus(string Name, string SubType, bool ArchiveStatus)
+            {
+                FlagDataStruct SX;
+                string S = Name.Trim();
+                if (!string.IsNullOrEmpty(SubType))
+                    S = S + " " + SubType.Trim();
+                bool IsItThere = FlagDataDictionary.TryGetValue(S.Trim().ToLower(), out SX);
+                if (!IsItThere)
+                    return (false);
+                SX.Archive = ArchiveStatus;
+                return (true);
+
+            }
+
+            internal bool TakeDeviceOffLine(string Name, string SubType, string ActionInitatedBy, out bool AlreadyOffline)
+            {
+                FlagDataStruct SX;
+                AlreadyOffline = false;
+                long Now = CurrentTick();
+                string S = Name.Trim();
+                if (!string.IsNullOrEmpty(SubType))
+                    S = S + " " + SubType.Trim();
+                bool IsItThere = FlagDataDictionary.TryGetValue(S.Trim().ToLower(), out SX);
+                if (!IsItThere)
+                    return (false);
+                if (!SX.IsDeviceOffline)
+                {
+                    SX.LastChangeHistory.ChangedBy = SX.ChangedBy;
+                    SX.LastChangeHistory.ChangeTime = SX.ChangeTick;
+                    SX.LastChangeHistory.RawValue = SX.RawValue;
+                    SX.LastChangeHistory.Value = SX.Value;
+                    SX.IsDeviceOffline = true;
+                    SX.Value = SysData.GetValue("OffLineName");
+                    SX.RawValue = SX.Value;
+                    SX.ChangedBy = ActionInitatedBy;
+                    SX.ChangeTick = Now;
+                    AlreadyOffline = false;
+                    FlagsToDisplay.Enqueue(SX);
+
+                    if (SX.MaxHistoryToSave > 0)
+                    {
+                        FlagChangeHistory FCH = new FlagChangeHistory();
+                        FCH.ChangedBy = ActionInitatedBy;
+                        FCH.ChangeTime = Now;
+                        FCH.RawValue = SX.RawValue;
+                        FCH.Value = SX.Value;
+                        SX.ChangeHistory.Add(FCH);
+                        if (SX.ChangeHistory.Count > SX.MaxHistoryToSave)
+                            SX.ChangeHistory.RemoveAt(0);
+                    }
+
+                    if (Archiving && ((!String.IsNullOrEmpty(SX.SourceUniqueID) && SX.SourceUniqueID.Substring(0, 1) == "D") || SX.Archive == true))
+                    {
+                        FlagArchiveStruct FAS = new FlagArchiveStruct();
+                        FAS.ChangeTick = SX.ChangeTick;
+                        FAS.CreateTick = SX.CreateTick;
+                        FAS.IsDeviceOffline = SX.IsDeviceOffline;
+                        FAS.Name = SX.Name;
+                        FAS.RawValue = SX.RawValue;
+                        FAS.RoomUniqueID = SX.RoomUniqueID;
+                        FAS.SourceUniqueID = SX.SourceUniqueID;
+                        FAS.SubType = SX.SubType;
+                        FAS.Value = SX.Value;
+                        ArchiveFlagChangesQueue.Enqueue(FAS);
+                    }
+
+                }
+                else
+                    AlreadyOffline = true;
+
+                return (true);
+            }
+
+            internal bool GetSpecialFlagInfo(string Name, out string Value, out string RawData)
+            {
+                if (Name.ToLower().Substring(0,17)== "$$actionitemsline")
+                {
+                    int c;
+                    if(int.TryParse(Name.Substring(17, 2),out c))
+                    {
+                        if(c<=_ActionItemsListbox.Items.Count)
+                        {
+                            CHMListBoxItems LBI = (CHMListBoxItems)_ActionItemsListbox.Items[c-1];
+                            Value = LBI.Text;
+                            RawData= LBI.Text;
+                            return (true);
+                        }
+                    }
+                }
+                Value = "";
+                RawData = "";
+                return (false);
+
+            }
+
+
+
             internal bool FullSetSystemFlag(string Name, string SubType, string Value, string SystemFlag_FlagType, string SystemFlag_FlagCatagory, string SystemFlag_ValidValues, string ActionInitatedBy, bool Archive)
             {
                 FlagDataStruct SX;
@@ -266,7 +500,7 @@ namespace CHM
                     S = S + " " + SubType.Trim();
                 long Now = CurrentTick();
 
-                bool IsItThere = FlagDataDictionary.TryGetValue(Name.Trim().ToLower(), out SX);
+                bool IsItThere = FlagDataDictionary.TryGetValue(S.Trim().ToLower(), out SX);
                 if (!IsItThere)
                 {
                     SX = new FlagDataStruct();
@@ -281,16 +515,21 @@ namespace CHM
                     SX.Name = Name.Trim();
                     SX.Value = Value.Trim();
                     SX.RawValue = SX.Value;
+                    SX.ChangeTick = Now;
                     SX.LastChangeHistory = new FlagChangeHistory();
                     SX.LastChangeHistory.ChangedBy = ActionInitatedBy;
                     SX.LastChangeHistory.ChangeTime = Now;
                     SX.LastChangeHistory.RawValue = SX.RawValue;
                     SX.LastChangeHistory.Value = SX.Value;
                     SX.Archive = Archive;
-                }
+              }
 
                 if (IsItThere && (SX.Value != Value.Trim() || SX.Archive != Archive))
                 {
+                    SX.LastChangeHistory.ChangedBy = SX.ChangedBy;
+                    SX.LastChangeHistory.ChangeTime = SX.ChangeTick;
+                    SX.LastChangeHistory.RawValue = SX.RawValue;
+                    SX.LastChangeHistory.Value = SX.Value;
                     SX.Value = Value.Trim();
                     SX.RawValue = SX.Value;
                     SX.SystemFlag_FlagCatagory = SystemFlag_FlagType;
@@ -299,18 +538,25 @@ namespace CHM
                     SX.ChangedBy = ActionInitatedBy;
                     SX.ChangeTick = Now;
                     SX.Archive = Archive;
-
+                    if (SX.IsDeviceOffline && SX.Value!= SysData.GetValue("OffLineName"))
+                    {
+                        MainCHMForm.PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), MODULESERIALNUMBER, 204, SX.Name+" "+SX.SubType + " ", SX.SourceUniqueID));
+                        ActionItemsListBoxQueue.Enqueue(new Tuple<string, ListBox, string, string>("", _ActionItemsListbox, "",  SX.SourceUniqueID+SysData.GetValue("OffLineName")));
+                        SX.IsDeviceOffline = false;
+                    }
                     if (SX.MaxHistoryToSave > 0)
                     {
-                        SX.LastChangeHistory = new FlagChangeHistory();
-                        SX.LastChangeHistory.ChangedBy = ActionInitatedBy;
-                        SX.LastChangeHistory.ChangeTime = Now;
-                        SX.LastChangeHistory.RawValue = SX.RawValue;
-                        SX.LastChangeHistory.Value = SX.Value;
-                        SX.ChangeHistory.Add(SX.LastChangeHistory);
+                        FlagChangeHistory FCH = new FlagChangeHistory();
+                        FCH.ChangedBy = ActionInitatedBy;
+                        FCH.ChangeTime = Now;
+                        FCH.RawValue = SX.RawValue;
+                        FCH.Value = SX.Value;
+
+                        SX.ChangeHistory.Add(FCH);
                         if (SX.ChangeHistory.Count > SX.MaxHistoryToSave)
                             SX.ChangeHistory.RemoveAt(0);
                     }
+
                     FlagsToDisplay.Enqueue(SX);
                     if (Archiving && ((!String.IsNullOrEmpty(SX.SourceUniqueID) && SX.SourceUniqueID.Substring(0, 1) == "D") || SX.Archive == true))
                     {
@@ -325,12 +571,24 @@ namespace CHM
                         FAS.SubType = SX.SubType;
                         FAS.Value = SX.Value;
                         ArchiveFlagChangesQueue.Enqueue(FAS);
+                        if (SX.MaxHistoryToSave > 0)
+                            SX.LastChangeHistory.Archived = true;
                     }
                 }
                 if (!IsItThere)
                 {
                     FlagDataDictionary.TryAdd(S.ToLower(), SX);
                     FlagsToDisplay.Enqueue(SX);
+                    if (SX.MaxHistoryToSave > 0)
+                    {
+                        FlagChangeHistory FCH = new FlagChangeHistory();
+                        FCH.ChangedBy = ActionInitatedBy;
+                        FCH.ChangeTime = Now;
+                        FCH.RawValue = SX.RawValue;
+                        FCH.Value = SX.Value;
+
+                        SX.ChangeHistory.Add(FCH);
+                    }
                     if (Archiving && ((!String.IsNullOrEmpty(SX.SourceUniqueID) && SX.SourceUniqueID.Substring(0, 1) == "D") || SX.Archive == true))
                     {
                         FlagArchiveStruct FAS = new FlagArchiveStruct();
@@ -344,6 +602,8 @@ namespace CHM
                         FAS.SubType = SX.SubType;
                         FAS.Value = SX.Value;
                         ArchiveFlagChangesQueue.Enqueue(FAS);
+                        if (SX.MaxHistoryToSave > 0)
+                            SX.LastChangeHistory.Archived = true;
                     }
                 }
 
@@ -382,6 +642,9 @@ namespace CHM
                     SX.SubType = SubType;
                     SX.Value = Value.Trim();
                     SX.RawValue = RawValue;
+                    SX.ChangeTick = Now;
+                    SX.ChangedBy = ActionInitatedBy;
+                    SX.UOM = UOM;
                     SX.LastChangeHistory = new FlagChangeHistory();
                     SX.LastChangeHistory.ChangedBy = ActionInitatedBy;
                     SX.LastChangeHistory.ChangeTime = Now;
@@ -392,6 +655,10 @@ namespace CHM
 
                 if (IsItThere && (SX.Value != Value.Trim() || SX.RawValue != RawValue || SX.UOM != UOM))
                 {
+                    SX.LastChangeHistory.ChangedBy = SX.ChangedBy;
+                    SX.LastChangeHistory.ChangeTime = SX.ChangeTick;
+                    SX.LastChangeHistory.RawValue = SX.RawValue;
+                    SX.LastChangeHistory.Value = SX.Value;
                     SX.Value = Value.Trim();
                     SX.RawValue = RawValue;
                     SX.ChangeMode = ChangeMode;
@@ -400,15 +667,21 @@ namespace CHM
                     SX.MaxHistoryToSave = MaxHistoryToSave;
                     SX.ChangedBy = ActionInitatedBy;
                     SX.ChangeTick = Now;
+                    if (SX.IsDeviceOffline && SX.Value != SysData.GetValue("OffLineName"))
+                    {
+                        MainCHMForm.PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), MODULESERIALNUMBER, 204, SX.Name + " " + SX.SubType + " ", SX.SourceUniqueID));
+                        ActionItemsListBoxQueue.Enqueue(new Tuple<string, ListBox, string, string>("", _ActionItemsListbox, "", SX.SourceUniqueID + SysData.GetValue("OffLineName")));
+                        SX.IsDeviceOffline = false;
+                    }
 
                     if (SX.MaxHistoryToSave > 0)
                     {
-                        SX.LastChangeHistory = new FlagChangeHistory();
-                        SX.LastChangeHistory.ChangedBy = ActionInitatedBy;
-                        SX.LastChangeHistory.ChangeTime = Now;
-                        SX.LastChangeHistory.RawValue = SX.RawValue;
-                        SX.LastChangeHistory.Value = SX.Value;
-                        SX.ChangeHistory.Add(SX.LastChangeHistory);
+                        FlagChangeHistory FCH = new FlagChangeHistory();
+                        FCH.ChangedBy = ActionInitatedBy;
+                        FCH.ChangeTime = Now;
+                        FCH.RawValue = SX.RawValue;
+                        FCH.Value = SX.Value;
+                        SX.ChangeHistory.Add(FCH);
                         if (SX.ChangeHistory.Count > SX.MaxHistoryToSave)
                             SX.ChangeHistory.RemoveAt(0);
                     }
@@ -429,12 +702,25 @@ namespace CHM
                         FAS.SubType = SX.SubType;
                         FAS.Value = SX.Value;
                         ArchiveFlagChangesQueue.Enqueue(FAS);
+                        if (SX.MaxHistoryToSave > 0)
+                            SX.LastChangeHistory.Archived = true;
                     }
                 }
                 if (!IsItThere)
                 {
                     FlagDataDictionary.TryAdd(S.ToLower(), SX);
                     FlagsToDisplay.Enqueue(SX);
+                    if (SX.MaxHistoryToSave > 0)
+                    {
+                        FlagChangeHistory FCH = new FlagChangeHistory();
+                        FCH.ChangedBy = ActionInitatedBy;
+                        FCH.ChangeTime = Now;
+                        FCH.RawValue = SX.RawValue;
+                        FCH.Value = SX.Value;
+
+                        SX.ChangeHistory.Add(FCH);
+
+                    }
                     if (Archiving && ((!String.IsNullOrEmpty(SX.SourceUniqueID) && SX.SourceUniqueID.Substring(0, 1) == "D") || SX.Archive == true))
                     {
                         FlagArchiveStruct FAS = new FlagArchiveStruct();
@@ -448,12 +734,19 @@ namespace CHM
                         FAS.SubType = SX.SubType;
                         FAS.Value = SX.Value;
                         ArchiveFlagChangesQueue.Enqueue(FAS);
+                        if (SX.MaxHistoryToSave > 0)
+                            SX.LastChangeHistory.Archived = true;
                     }
                 }
                 return (true);
             }
 
             internal bool FullSetAddOnly(string Name, string SubType, string Room, string SourceUnique, string Value, string RawValue, FlagChangeCodes ChangeMode, string ActionInitatedBy, int MaxHistoryToSave, string ValidValues)
+            {
+                return (FullSetAddOnly(Name,  SubType,  Room,  SourceUnique,  Value,  RawValue,  ChangeMode,  ActionInitatedBy,  MaxHistoryToSave,  ValidValues, ""));
+            }
+
+            internal bool FullSetAddOnly(string Name, string SubType, string Room, string SourceUnique, string Value, string RawValue, FlagChangeCodes ChangeMode, string ActionInitatedBy, int MaxHistoryToSave, string ValidValues, string UOM)
             {
                 FlagDataStruct SX = new FlagDataStruct();
                 long Now = CurrentTick();
@@ -469,14 +762,26 @@ namespace CHM
                 SX.CreatedRawValue = RawValue;
                 SX.RoomUniqueID = Room;
                 SX.SourceUniqueID = SourceUnique;
+                SX.UOM = UOM;
+                SX.ChangeTick = Now;
+                SX.ChangedBy = ActionInitatedBy;
                 SX.ChangeHistory = new List<FlagChangeHistory>();
                 SX.MaxHistoryToSave = MaxHistoryToSave;
-                SX.ValidValues = ValidValues; SX.LastChangeHistory = new FlagChangeHistory();
+                SX.ValidValues = ValidValues;
+                SX.LastChangeHistory = new FlagChangeHistory();
                 SX.LastChangeHistory.ChangedBy = ActionInitatedBy;
                 SX.LastChangeHistory.ChangeTime = Now;
                 SX.LastChangeHistory.RawValue = SX.RawValue;
                 SX.LastChangeHistory.Value = SX.Value;
-
+                if (SX.MaxHistoryToSave > 0)
+                {
+                    FlagChangeHistory FCH = new FlagChangeHistory();
+                    FCH.ChangedBy = ActionInitatedBy;
+                    FCH.ChangeTime = Now;
+                    FCH.RawValue = SX.RawValue;
+                    FCH.Value = SX.Value;
+                    SX.ChangeHistory.Add(FCH);
+                }
 
                 string S = Name;
                 if (!string.IsNullOrEmpty(SubType))
@@ -498,6 +803,8 @@ namespace CHM
                     FAS.SubType = SX.SubType;
                     FAS.Value = SX.Value;
                     ArchiveFlagChangesQueue.Enqueue(FAS);
+                    if (SX.MaxHistoryToSave > 0)
+                        SX.LastChangeHistory.Archived = true;
                 }
                 return (true);
             }
@@ -552,30 +859,53 @@ namespace CHM
                     SX.SubType = SubType.Trim();
                     SX.Value = Value.Trim();
                     SX.RawValue = RawValue;
+                    SX.ChangeTick = Now;
+                    SX.ChangedBy = ActionInitatedBy;
                     SX.LastChangeHistory = new FlagChangeHistory();
                     SX.LastChangeHistory.ChangedBy = ActionInitatedBy;
                     SX.LastChangeHistory.ChangeTime = Now;
                     SX.LastChangeHistory.RawValue = SX.RawValue;
                     SX.LastChangeHistory.Value = SX.Value;
+                    if (SX.MaxHistoryToSave > 0)
+                    {
+                        FlagChangeHistory FCH = new FlagChangeHistory();
+                        FCH.ChangedBy = ActionInitatedBy;
+                        FCH.ChangeTime = Now;
+                        FCH.RawValue = SX.RawValue;
+                        FCH.Value = SX.Value;
 
+                        SX.ChangeHistory.Add(FCH);
+
+                    }
                 }
 
                 if (IsItThere && (SX.Value != Value.Trim() || SX.RawValue != RawValue))
                 {
+                    SX.LastChangeHistory.ChangedBy = SX.ChangedBy;
+                    SX.LastChangeHistory.ChangeTime = SX.ChangeTick;
+                    SX.LastChangeHistory.RawValue = SX.RawValue;
+                    SX.LastChangeHistory.Value = SX.Value;
                     SX.Value = Value.Trim();
                     SX.RawValue = RawValue;
                     SX.ChangeMode = ChangeMode;
                     SX.ChangedBy = ActionInitatedBy;
                     SX.ChangeTick = Now;
+                    if (SX.IsDeviceOffline && SX.Value != SysData.GetValue("OffLineName"))
+                    {
+                        MainCHMForm.PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), MODULESERIALNUMBER, 204, SX.Name + " " + SX.SubType + " ", SX.SourceUniqueID));
+                        ActionItemsListBoxQueue.Enqueue(new Tuple<string, ListBox, string, string>("", _ActionItemsListbox, "", SX.SourceUniqueID + SysData.GetValue("OffLineName")));
+                        SX.IsDeviceOffline = false;
+                    }
+
 
                     if (SX.MaxHistoryToSave > 0)
                     {
-                        SX.LastChangeHistory = new FlagChangeHistory();
-                        SX.LastChangeHistory.ChangedBy = ActionInitatedBy;
-                        SX.LastChangeHistory.ChangeTime = Now;
-                        SX.LastChangeHistory.RawValue = SX.RawValue;
-                        SX.LastChangeHistory.Value = SX.Value;
-                        SX.ChangeHistory.Add(SX.LastChangeHistory);
+                        FlagChangeHistory FCH = new FlagChangeHistory();
+                        FCH.ChangedBy = ActionInitatedBy;
+                        FCH.ChangeTime = Now;
+                        FCH.RawValue = SX.RawValue;
+                        FCH.Value = SX.Value;
+                        SX.ChangeHistory.Add(FCH);
                         if (SX.ChangeHistory.Count > SX.MaxHistoryToSave)
                             SX.ChangeHistory.RemoveAt(0);
                     }
@@ -593,6 +923,8 @@ namespace CHM
                         FAS.SubType = SX.SubType;
                         FAS.Value = SX.Value;
                         ArchiveFlagChangesQueue.Enqueue(FAS);
+                        if (SX.MaxHistoryToSave > 0)
+                            SX.LastChangeHistory.Archived = true;
                     }
                 }
 
@@ -613,6 +945,8 @@ namespace CHM
                         FAS.SubType = SX.SubType;
                         FAS.Value = SX.Value;
                         ArchiveFlagChangesQueue.Enqueue(FAS);
+                        if (SX.MaxHistoryToSave > 0)
+                            SX.LastChangeHistory.Archived = true;
                     }
                 }
                 return (true);
@@ -648,30 +982,52 @@ namespace CHM
                     SX.SubType = SubType.Trim();
                     SX.Value = Value.Trim();
                     SX.RawValue = RawValue;
+                    SX.ChangeTick = Now;
+                    SX.ChangedBy = ActionInitatedBy;
                     SX.LastChangeHistory = new FlagChangeHistory();
                     SX.LastChangeHistory.ChangedBy = ActionInitatedBy;
                     SX.LastChangeHistory.ChangeTime = Now;
                     SX.LastChangeHistory.RawValue = SX.RawValue;
                     SX.LastChangeHistory.Value = SX.Value;
+                    if (SX.MaxHistoryToSave > 0)
+                    {
+                        FlagChangeHistory FCH = new FlagChangeHistory();
+                        FCH.ChangedBy = ActionInitatedBy;
+                        FCH.ChangeTime = Now;
+                        FCH.RawValue = SX.RawValue;
+                        FCH.Value = SX.Value;
 
+                        SX.ChangeHistory.Add(FCH);
+                    }
                 }
 
                 if (IsItThere && (SX.Value != Value.Trim() || SX.RawValue != RawValue))
                 {
+                    SX.LastChangeHistory.ChangedBy = SX.ChangedBy;
+                    SX.LastChangeHistory.ChangeTime = SX.ChangeTick;
+                    SX.LastChangeHistory.RawValue = SX.RawValue;
+                    SX.LastChangeHistory.Value = SX.Value;
                     SX.Value = Value.Trim();
                     SX.RawValue = RawValue;
                     SX.ChangeMode = ChangeMode;
                     SX.ChangedBy = ActionInitatedBy;
                     SX.ChangeTick = Now;
+                    if (SX.IsDeviceOffline && SX.Value != SysData.GetValue("OffLineName"))
+                    {
+                        MainCHMForm.PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), MODULESERIALNUMBER, 204, SX.Name + " " + SX.SubType + " ", SX.SourceUniqueID));
+                        ActionItemsListBoxQueue.Enqueue(new Tuple<string, ListBox, string, string>("", _ActionItemsListbox, "", SX.SourceUniqueID + SysData.GetValue("OffLineName")));
+                        SX.IsDeviceOffline = false;
+                    }
+
 
                     if (SX.MaxHistoryToSave > 0)
                     {
-                        SX.LastChangeHistory = new FlagChangeHistory();
-                        SX.LastChangeHistory.ChangedBy = ActionInitatedBy;
-                        SX.LastChangeHistory.ChangeTime = Now;
-                        SX.LastChangeHistory.RawValue = SX.RawValue;
-                        SX.LastChangeHistory.Value = SX.Value;
-                        SX.ChangeHistory.Add(SX.LastChangeHistory);
+                        FlagChangeHistory FCH = new FlagChangeHistory();
+                        FCH.ChangedBy = ActionInitatedBy;
+                        FCH.ChangeTime = Now;
+                        FCH.RawValue = SX.RawValue;
+                        FCH.Value = SX.Value;
+                        SX.ChangeHistory.Add(FCH);
                         if (SX.ChangeHistory.Count > SX.MaxHistoryToSave)
                             SX.ChangeHistory.RemoveAt(0);
                     }
@@ -689,6 +1045,8 @@ namespace CHM
                         FAS.SubType = SX.SubType;
                         FAS.Value = SX.Value;
                         ArchiveFlagChangesQueue.Enqueue(FAS);
+                        if (SX.MaxHistoryToSave > 0)
+                            SX.LastChangeHistory.Archived = true;
                     }
                 }
 
@@ -709,6 +1067,8 @@ namespace CHM
                         FAS.SubType = SX.SubType;
                         FAS.Value = SX.Value;
                         ArchiveFlagChangesQueue.Enqueue(FAS);
+                        if (SX.MaxHistoryToSave > 0)
+                            SX.LastChangeHistory.Archived = true;
                     }
                 }
                 return (true);
@@ -1122,18 +1482,6 @@ namespace CHM
 
         #region Structs
 
-        internal struct StanfordNLPResults
-        {
-            internal string Word;
-            internal string POS;
-            internal string TNER;
-            internal string TNormer;
-            internal string TTime;
-            internal string TNNET;
-        }
-
-
-
         internal struct PluginStruct
         {
             internal string PluginName;
@@ -1168,8 +1516,6 @@ namespace CHM
             internal string[] OriginalDataBaseInfo;
         };
 
-
-
         #endregion
 
         #region System Constants
@@ -1190,9 +1536,10 @@ namespace CHM
         static internal CHMPluginAPI.EvalFunctions EvalMathFunctions;
 
 //Containers
-        internal ConcurrentQueue<string> PendingMessageQueue;
+        internal static ConcurrentQueue<string> PendingMessageQueue;
         internal ConcurrentQueue<Tuple<string, ListBox, string>> OtherGUIBoxesQueue;
-        internal ConcurrentQueue<Tuple<string, ListBox, string>> ActionItemsListBoxQueue;
+        internal static ConcurrentQueue<Tuple<string, ListBox, string, string>> ActionItemsListBoxQueue;
+        internal static ConcurrentQueue<Tuple<string, ListBox, string, string>> EventsItemsListBoxQueue;
         internal ConcurrentQueue<ListBox> LBToClearQueue;
         internal ConcurrentQueue<string> SavedMessageQueue;
         internal ConcurrentQueue<string> ErrorMessageQueue;
@@ -1206,9 +1553,10 @@ namespace CHM
         internal Dictionary<string, DeviceTemplateStruct> DeviceTemplateDictionary;
         internal Dictionary<string, PasswordStruct> PasswordDictionary;
         internal Dictionary<string, StatusMessagesStruct> StatusMessagesDictionary;
-        static internal List<Tuple<string, string>> RoomList;
+        static internal List<Tuple<string, string, string, string>> RoomList;
         static List<SystemFlagStruct> SystemFlagsList;
         static SortedList<int, Tuple<string, string, string>> UOM;
+
 
         //Global Variables
         static long UTCOffsetTicks = -1;
@@ -1388,10 +1736,58 @@ namespace CHM
             InitializeComponent();
         }
 
+        internal void AddToUnexpectedErrorQueue(Exception EMessage)
+        {
+            try
+            {
+                PluginErrorMessage PEM;
+
+                PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), MODULESERIALNUMBER, 2000002, EMessage + "\r\n\r\n", ""));
+            }
+            catch
+            {
+
+            }
+        }
+
+        static int RecoveryProcedure(RecoveryData parameter)
+        {
+            ArrImports.ApplicationRecoveryFinished(true);
+            return 0;
+        }
+
+        private static void RegisterForRestart()
+        {
+            // Register for automatic restart if the application 
+            // was terminated for any reason.
+            ArrImports.RegisterApplicationRestart("/restart",
+                (int)RestartRestrictions.None);
+        }
+
+        private static void RegisterForRecovery()
+        {
+            // Create the delegate that will invoke the recovery method.
+            RecoveryDelegate recoveryCallback =
+                 new RecoveryDelegate(RecoveryProcedure);
+            uint pingInterval = 5000, flags = 0;
+            RecoveryData parameter = new RecoveryData(Environment.UserName);
+
+            // Register for recovery notification.
+            int regReturn = ArrImports.RegisterApplicationRecoveryCallback(
+                recoveryCallback,
+                parameter,
+                pingInterval,
+                flags);
+        }
+
         internal void MainCHMForm_Load(object sender, EventArgs e)
         {
+            RegisterForRecovery();
+            RegisterForRestart();
+
             PendingMessageQueue = new ConcurrentQueue<string>();
-            ActionItemsListBoxQueue = new ConcurrentQueue<Tuple<string, ListBox, string>>();
+            ActionItemsListBoxQueue = new ConcurrentQueue<Tuple<string, ListBox, string, string>>();
+            EventsItemsListBoxQueue = new ConcurrentQueue<Tuple<string, ListBox, string, string>>();
             OtherGUIBoxesQueue = new ConcurrentQueue<Tuple<string, ListBox, string>>();
             SavedMessageQueue = new ConcurrentQueue<string>();
             ErrorMessageQueue = new ConcurrentQueue<string>();
@@ -1424,8 +1820,8 @@ namespace CHM
             MenuDeviceListFlagChanges = new ConcurrentQueue<Tuple<string, FlagDataStruct>>();
 
 
-            RoomList = new List<Tuple<string, string>>();
-            FlagAccess = new FlagData(_GetCurrentTick, SysData);
+            RoomList = new List<Tuple<string, string, string, string>>();
+            FlagAccess = new FlagData(_GetCurrentTick, SysData, ActionItemsListBox, EventsItemsListBox);
             SysData.AddFlagAccess(FlagAccess);
 
             //SysData Variable Initialization            
@@ -1607,7 +2003,16 @@ namespace CHM
                     if (properties.GatewayAddresses.Count == 0)
                         continue;
                     flag = true;
-                    break;
+
+                    var host = Dns.GetHostEntry(Dns.GetHostName());
+                    foreach (var ip in host.AddressList)
+                    {
+                        if (ip.AddressFamily == AddressFamily.InterNetwork)
+                        {
+                            FlagAccess.Set("Machine IP Address", "", ip.ToString(), FlagChangeCodes.OwnerOnly, MODULESERIALNUMBER, 0);
+                            break;
+                        }
+                    }
                 }
                 if (flag)
                     break;
@@ -1689,10 +2094,18 @@ namespace CHM
 
             //Lookup SysData Values From MainDatabase
             PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), MODULESERIALNUMBER, 4, "", ""));
+            bool ValidData;
+            string[] Stuff;
+            var SQL = MainDB.ExecuteSQLCommandWithReaderandFields("Configuration", "*", "ModuleSerialNumber = " + DatabaseAccess.DATABASEQUOTE + MODULESERIALNUMBER + DatabaseAccess.DATABASEQUOTE + " and fieldname= " + DatabaseAccess.DATABASEQUOTE + "TimeZone" + DatabaseAccess.DATABASEQUOTE, out ValidData);
+            if (ValidData)
+            {
+                MainDB.GetNextRecordWithReader(ref SQL, out Stuff, out ValidData);
+                SysData._SetX(Stuff[1], Stuff[1], Stuff[3], Convert.ToChar(Stuff[4]), true);
+            }
 
-            SysData.LoadConfigurationDataFromDatabase(MainDB);
             UTCOffsetTicks = _UTCOffset();
             FlagAccess.Set("UTCOffset", "", ((int)(Math.Abs(UTCOffsetTicks) / TimeSpan.TicksPerHour)) * Math.Sign(UTCOffsetTicks), FlagChangeCodes.OwnerOnly, MODULESERIALNUMBER, 0);
+            SysData.LoadConfigurationDataFromDatabase(MainDB);
 
 
             S = SysData.GetValue("DebugCode");
@@ -1752,6 +2165,15 @@ namespace CHM
                 }
                 MainMenuStrip.Items.Add(Mitem);
             }
+
+            System.Reflection.Assembly assembly = System.Reflection.Assembly.GetExecutingAssembly();
+            FileVersionInfo fvi = FileVersionInfo.GetVersionInfo(assembly.Location);
+            
+            FlagAccess.Set("Module 0000", "Name", Path.GetFileName(fvi.FileName), FlagChangeCodes.OwnerOnly, MODULESERIALNUMBER, -1);
+            FlagAccess.Set("Module 0000", "Serial Number", MODULESERIALNUMBER, FlagChangeCodes.OwnerOnly, MODULESERIALNUMBER, -1);
+            FlagAccess.Set("Module 0000", "Version", fvi.FileVersion, FlagChangeCodes.OwnerOnly, MODULESERIALNUMBER, -1);
+            FlagAccess.Set("Module 0000", "Description", fvi.FileDescription, FlagChangeCodes.OwnerOnly, MODULESERIALNUMBER, -1);
+
 
             //Populate Plugin Dictionary with Valid and Ignored Plugins
             PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), MODULESERIALNUMBER, 40, "", ""));
@@ -1870,7 +2292,10 @@ namespace CHM
                     SCF.GetSingleFlag = new ServerFunctionsStruct.ServerGetFlagDelegate(PD.ServerGetFlag);
                     SCF.GetSingleFlagFromServerFull = new ServerFunctionsStruct.GetSingleFlagFromServerFullDelegate(PD.GetSingleFlagFromServerFull);
                     SCF.GetMacro = new ServerFunctionsStruct.GetMacroDelegate(PD.GetMacro);
-                    SCF.RunDirectCommand = new ServerFunctionsStruct.RunDirectCommandDelegate(PD.RunDirectCommand);
+                    SCF.GetAutomation = new ServerFunctionsStruct.GetAutomationDelegate(PD.GetAutomation);
+
+        SCF.RunDirectCommand = new ServerFunctionsStruct.RunDirectCommandDelegate(PD.RunDirectCommand);
+                    SCF.GetDeviceFromDB = new ServerFunctionsStruct.GetDeviceFromDBDelegate(PD.GetDeviceFromDB);
                     PluginProcess.ServerAssemblyType.InvokeMember("CHMAPI_ServerFunctions", BindingFlags.InvokeMethod, null, PluginProcess.ServerInstance, new object[] { SCF });
 
                     if (DebugSettings[2])
@@ -1882,14 +2307,14 @@ namespace CHM
                     if (DebugSettings[2])
                         PendingMessageQueue.Enqueue(string.Format(DEBUGQUEUEFORMATSTRING, _GetCurrentTick(), "CHMAPI_PluginStartupCompleted-Return", 9999999, PluginProcess.PluginName, ""));
 
-                    //if (PluginProcess.OriginalDataBaseInfo[4].ToUpper() == "AICOMMAND")3232
-                    //{
-                    //    PluginProcess.ServerAssemblyType = PluginProcess.Plugin.GetType("CHMModules.AICommandProcessing");
-                    //    PluginProcess.ServerInstance = PluginProcess.ServerAssemblyType.InvokeMember(string.Empty, BindingFlags.CreateInstance, null, null, null);
+                    if (PluginProcess.OriginalDataBaseInfo[4].ToUpper()=="COMMAND")
+                    {
+                        PluginProcess.ServerAssemblyType = PluginProcess.Plugin.GetType("CHMModules.AutomationProcesses");
+                        PluginProcess.ServerInstance = PluginProcess.ServerAssemblyType.InvokeMember(string.Empty, BindingFlags.CreateInstance, null, null, null);
 
-                    //    object[] DeviceDatastreamProcesses = new object[] { FlagData.FlagDataDictionary, DeviceDictionary, RoomList };
-                    //    PluginProcess.ServerAssemblyType.InvokeMember("CommandProcessing_ServerLinks", BindingFlags.InvokeMethod, null, PluginProcess.ServerInstance, DeviceDatastreamProcesses);
-                    //}
+                        object[] DeviceDatastreamProcesses = new object[] { FlagData.FlagDataDictionary, DeviceDictionary, RoomList };
+                        PluginProcess.ServerAssemblyType.InvokeMember("CommandProcessing_ServerLinks", BindingFlags.InvokeMethod, null, PluginProcess.ServerInstance, DeviceDatastreamProcesses);
+                    }
                 }
                 catch (Exception err)
                 {
@@ -2386,6 +2811,15 @@ namespace CHM
             SysData._SaveQueuedValuesToDataBase(MainDB); //Write SysData Configuration Info to Database
 
             //Check and Process Time Changes
+
+
+            if (MaintanenceTimerStart.IsDaylightSavingTime() != MaintanenceTimerLastDate.IsDaylightSavingTime()) //Check for Daylight Savings Time Change
+            {
+                UTCOffsetTicks = _UTCOffset();
+                FlagAccess.Set("UTCOffset", "", ((int)(Math.Abs(UTCOffsetTicks) / TimeSpan.TicksPerHour)) * Math.Sign(UTCOffsetTicks), FlagChangeCodes.OwnerOnly, MODULESERIALNUMBER, 0);
+            }
+
+
             if (MaintanenceTimerStart.Second!= MaintanenceTimerLastDate.Second) //The Seconds Have Changed
             {
                 FlagAccess.Set("CurrentSecond", "", MaintanenceTimerStart.Second.ToString("#0"), FlagChangeCodes.OwnerOnly, MODULESERIALNUMBER, -1);
@@ -2508,8 +2942,8 @@ namespace CHM
                         if (DebugSettings[1])
                             PendingMessageQueue.Enqueue(string.Format(DEBUGQUEUEFORMATSTRING, _GetCurrentTick(), "Start of Flag From Plugin", 9999999, index.ToString(), ""));
 
-
-                        object[] FlagSet = new object[] { PluginFlag };
+                        Tuple<string, string, DateTime> PluginEvent= null;
+                          object[] FlagSet = new object[] { PluginFlag, PluginEvent };
                         if (DebugSettings[3])
                             PendingMessageQueue.Enqueue(string.Format(DEBUGQUEUEFORMATSTRING, _GetCurrentTick(), "CHMAPI_SetFlagOnServer-Invoke", 9999999, PluginProcess.PluginName, ""));
 
@@ -2518,30 +2952,47 @@ namespace CHM
                             if (LocalPluginTimerSequence != PluginTimerStart)  //Watchdog Restarted this
                                 return;
                             PluginFlag = (NewFlagStruct)FlagSet[0];
+                            PluginEvent = (Tuple<string, string, DateTime>)FlagSet[1];
 
-                            if (FlagAccess.FlagValidityCheck(PluginFlag.FlagName + " " + PluginFlag.FlagSubType, PluginProcess.DBSerialNumber))
+                            if (!string.IsNullOrEmpty(PluginFlag.FlagName))
                             {
-                                if (PluginFlag.Operation == FlagActionCodes.addorupdate)
-                                    flag = FlagAccess.FullSet(PluginFlag.FlagName, PluginFlag.FlagSubType, PluginFlag.RoomUniqueID, PluginFlag.SourceUniqueID, PluginFlag.FlagValue, PluginFlag.FlagRawValue, PluginFlag.Type, PluginProcess.DBSerialNumber, PluginFlag.MaxHistoryToSave, PluginFlag.ValidValues, PluginFlag.UOM);
-
-                                if (PluginFlag.Operation == FlagActionCodes.delete)
-                                    flag = FlagAccess.DeleteFlag(PluginFlag.FlagName, PluginFlag.FlagSubType);
-
-                                if (PluginFlag.Operation == FlagActionCodes.addonly)
+                                if (FlagAccess.FlagValidityCheck(PluginFlag.FlagName + " " + PluginFlag.FlagSubType, PluginProcess.DBSerialNumber))
                                 {
-                                    flag = FlagAccess.FullSetAddOnly(PluginFlag.FlagName, PluginFlag.FlagSubType, PluginFlag.RoomUniqueID, PluginFlag.UniqueID, PluginFlag.FlagValue, PluginFlag.FlagRawValue, PluginFlag.Type, PluginProcess.DBSerialNumber, PluginFlag.MaxHistoryToSave, PluginFlag.ValidValues);
+                                    if (PluginFlag.Operation == FlagActionCodes.addorupdate)
+                                        flag = FlagAccess.FullSet(PluginFlag.FlagName, PluginFlag.FlagSubType, PluginFlag.RoomUniqueID, PluginFlag.SourceUniqueID, PluginFlag.FlagValue, PluginFlag.FlagRawValue, PluginFlag.Type, PluginProcess.DBSerialNumber, PluginFlag.MaxHistoryToSave, PluginFlag.ValidValues, PluginFlag.UOM);
+
+                                    if (PluginFlag.Operation == FlagActionCodes.delete)
+                                        flag = FlagAccess.DeleteFlag(PluginFlag.FlagName, PluginFlag.FlagSubType);
+
+                                    if (PluginFlag.Operation == FlagActionCodes.addonly)
+                                    {
+                                        flag = FlagAccess.FullSetAddOnly(PluginFlag.FlagName, PluginFlag.FlagSubType, PluginFlag.RoomUniqueID, PluginFlag.UniqueID, PluginFlag.FlagValue, PluginFlag.FlagRawValue, PluginFlag.Type, PluginProcess.DBSerialNumber, PluginFlag.MaxHistoryToSave, PluginFlag.ValidValues, PluginFlag.UOM);
+                                    }
+
+
+                                    if (PluginFlag.Operation == FlagActionCodes.updateonly)
+                                    {
+                                        flag = FlagAccess.FullSetUpdateOnly(PluginFlag.FlagName, PluginFlag.FlagSubType, PluginFlag.RoomUniqueID, PluginFlag.UniqueID, PluginFlag.FlagValue, PluginFlag.FlagRawValue, PluginFlag.Type, PluginProcess.DBSerialNumber, PluginFlag.MaxHistoryToSave, PluginFlag.ValidValues, PluginFlag.UOM);
+                                    }
+
+                                    if (PluginFlag.ChangeArchiveStatus)
+                                    {
+                                        FlagAccess.ChangeFlagArchiveStatus(PluginFlag.FlagName, PluginFlag.FlagSubType, PluginFlag.NewArchiveStatus);
+                                        flag = FlagAccess.FullSetUpdateOnly(PluginFlag.FlagName, PluginFlag.FlagSubType, PluginFlag.RoomUniqueID, PluginFlag.UniqueID, PluginFlag.FlagValue, PluginFlag.FlagRawValue, PluginFlag.Type, PluginProcess.DBSerialNumber, PluginFlag.MaxHistoryToSave, PluginFlag.ValidValues, PluginFlag.UOM);
+
+                                    }
                                 }
-
-
-                                if (PluginFlag.Operation == FlagActionCodes.updateonly)
+                                else
                                 {
-                                    flag = FlagAccess.FullSetUpdateOnly(PluginFlag.FlagName, PluginFlag.FlagSubType, PluginFlag.RoomUniqueID, PluginFlag.UniqueID, PluginFlag.FlagValue, PluginFlag.FlagRawValue, PluginFlag.Type, PluginProcess.DBSerialNumber, PluginFlag.MaxHistoryToSave, PluginFlag.ValidValues, PluginFlag.UOM);
+                                    PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), MODULESERIALNUMBER, 113, "", " (" + PluginFlag.FlagName + PluginFlag.FlagSubType + "-" + PluginProcess.DBSerialNumber + ")"));
+                                    ;
                                 }
                             }
-                            else
+
+                            if (PluginEvent!=null)
                             {
-                                PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), MODULESERIALNUMBER, 113, "", " (" + PluginFlag.FlagName + PluginFlag.FlagSubType + "-" + PluginProcess.DBSerialNumber + ")"));
-                                ;
+                                FlagAccess.AddOrUpdateEventData(PluginEvent.Item1, PluginProcess.PluginName, PluginEvent.Item2, PluginEvent.Item3);
+
                             }
                             TransactionCount++;
                         }
@@ -2648,7 +3099,8 @@ namespace CHM
 
                             if (PSS.Command == ServerPluginCommands.ProcessWordFlagCompleted)
                             {
-                                LBToClearQueue.Enqueue(ImmediateCommandsResponse);
+                                if (PSS.Bool)
+                                    LBToClearQueue.Enqueue(ImmediateCommandsResponse);
                                 OtherGUIBoxesQueue.Enqueue(new Tuple<string, ListBox, string>(PSS.String, ImmediateCommandsResponse, null));
                                 foreach (Tuple<string, string> DC in (List<Tuple<string, string>>)PSS.ReferenceObject)
                                 {
@@ -2671,7 +3123,8 @@ namespace CHM
 
                             if (PSS.Command == ServerPluginCommands.ProcessWordDisplayCompleted)
                             {
-                                LBToClearQueue.Enqueue(ImmediateCommandsResponse);
+                                if (PSS.Bool)
+                                    LBToClearQueue.Enqueue(ImmediateCommandsResponse);
                                 OtherGUIBoxesQueue.Enqueue(new Tuple<string, ListBox, string>(PSS.String, ImmediateCommandsResponse, null));
                                 foreach (Tuple<string, string> DC in (List<Tuple<string, string>>)PSS.ReferenceObject)
                                 {
@@ -2683,10 +3136,23 @@ namespace CHM
 
                             }
 
+                            if (PSS.Command == ServerPluginCommands.ProcessMacroDeviceCommandCompleted)
+                            {
+                                DeviceStruct DS;
+                                if (PSS.Bool)
+                                    LBToClearQueue.Enqueue(ImmediateCommandsResponse);
+                                Tuple<string, string> DC = (Tuple<string, string>) PSS.ReferenceObject;
+                                DeviceDictionary.TryGetValue(DC.Item1, out DS);
+                                OtherGUIBoxesQueue.Enqueue(new Tuple<string, ListBox, string>(RoomList.Find(c => c.Item1 == DS.RoomUniqueID).Item2 + " " + DS.DeviceName + ": " + PSS.String2, ImmediateCommandsResponse, null));
+                                continue;
+                            }
+
+
                             if (PSS.Command == ServerPluginCommands.ProcessWordCommandCompleted)
                             {
                                 DeviceStruct DS;
-                                LBToClearQueue.Enqueue(ImmediateCommandsResponse);
+                                if (PSS.Bool)
+                                    LBToClearQueue.Enqueue(ImmediateCommandsResponse);
                                 OtherGUIBoxesQueue.Enqueue(new Tuple<string, ListBox, string>(PSS.String, ImmediateCommandsResponse, null));
 
                                 int count = 0;
@@ -2713,11 +3179,10 @@ namespace CHM
                                         PCS.DeviceUniqueID = DC.Item2;
                                         PCS.String = PSS.String;
                                         PCS.String2 = DC.Item1;
-                                        PCS.String3 = DC.Item2;
                                         PCS.String4 = DC.Item3;
                                         PCS.UniqueNumber = string.Format("{0:0000}-{1:0000000000}", "XXXX", NextSequencialNumber);
                                         PCS.OriginPlugin = PSS.Plugin;
-                                        bool fl0 = DeviceDictionary.TryGetValue(DC.Item1, out DS);
+                                        bool fl0 = DeviceDictionary.TryGetValue(DC.Item2, out DS);
 
                                         if (fl0)
                                         {
@@ -2802,6 +3267,17 @@ namespace CHM
 
                             }
 
+                            if (PSS.Command == ServerPluginCommands.ProcessWordMacroCompleted)
+                            {
+                                if(PSS.Bool)
+                                    LBToClearQueue.Enqueue(ImmediateCommandsResponse);
+                                string S1 = "", EC = "";
+                                MainDB.GetMessageByCode(SysData.GetValue("LanguageCode"), MODULESERIALNUMBER, 1002, ref S1, ref EC);                               
+                                OtherGUIBoxesQueue.Enqueue(new Tuple<string, ListBox, string>(S1+" "+ PSS.String, ImmediateCommandsResponse, null));
+
+                                continue;
+                            }
+
                             if (PSS.Command == ServerPluginCommands.AddRoom)
                             {
                                 string[] FieldNames = { "UniqueID", "RoomName", "Location", "InterfaceUniqueIDs" };
@@ -2811,9 +3287,9 @@ namespace CHM
                                 Values[2] = PSS.String3;
                                 Values[3] = PSS.String4;
                                 MainDB.WriteRecord("Rooms", FieldNames, Values);
-                                IncedentFlagQueue.Enqueue(new Tuple<PluginIncedentFlags, object>(PluginIncedentFlags.NewRoom, (object)PSS.String));
+                                IncedentFlagQueue.Enqueue(new Tuple<PluginIncedentFlags, object>(PluginIncedentFlags.NewRoom, (object)Values));
                                 PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), MODULESERIALNUMBER, 200, PSS.String2 + " (" + PSS.String + ") ", ""));
-                                RoomList.Add(Tuple.Create(PSS.String, PSS.String2));
+                                RoomList.Add(Tuple.Create(PSS.String, PSS.String2, PSS.String3, PSS.String4));
                                 continue;
                             }
 
@@ -2843,7 +3319,7 @@ namespace CHM
                                 string S1 = "", EC = "";
                                 MainDB.GetMessageByCode(SysData.GetValue("LanguageCode"), PluginProcess.DBSerialNumber, PSS.CommandNumber, ref S1, ref EC);
                                 string S = _GetCurrentTime() + " " + PSS.String + " " + S1 + PSS.String2 + " (" + PluginProcess.PluginName + ")";
-                                ActionItemsListBoxQueue.Enqueue(new Tuple<string, ListBox, string>(S, ActionItemsListBox, PSS.String3));
+                                ActionItemsListBoxQueue.Enqueue(new Tuple<string, ListBox, string, string>(S, ActionItemsListBox, "", PSS.String3));
                                 continue;
 
 
@@ -2851,7 +3327,7 @@ namespace CHM
 
                             if (PSS.Command == ServerPluginCommands.DeleteActionItem)
                             {
-                                ActionItemsListBoxQueue.Enqueue(new Tuple<string, ListBox, string>("", ActionItemsListBox, PSS.String3));
+                                ActionItemsListBoxQueue.Enqueue(new Tuple<string, ListBox, string, string>("", ActionItemsListBox, "", PSS.String3));
                                 continue;
 
 
@@ -2873,32 +3349,76 @@ namespace CHM
 
                             }
 
-                            if(PSS.Command==ServerPluginCommands.DeviceIsOffline || PSS.Command == ServerPluginCommands.DeviceIsOnline)
+                            if(PSS.Command==ServerPluginCommands.DeviceIsOffline)
                             {
                                 DeviceStruct DS;
                                 string S = "", T = "";
                                 MainDB.GetMessageByCode(SysData.GetValue("LanguageCode"), MODULESERIALNUMBER, 1000, ref S, ref T);
 
                                 DeviceDictionary.TryGetValue(PSS.String, out DS);
-                                S = RoomList.Find(c => c.Item1 == DS.RoomUniqueID).Item2 + " " + DS.DeviceName + " " + S;
-                                FlagDataStruct Flag;
-
-                                //Get Flag for all subvalues From COnfig Info
-                                if (FlagAccess.GetFlag(S.ToLower(), PSS.String2.ToLower(), out Flag))
+                                S = RoomList.Find(c => c.Item1 == DS.RoomUniqueID).Item2 + " " + DS.DeviceName;
+ 
+                                try
                                 {
+                                    XmlDocument XML = new XmlDocument();
+                                    XML.LoadXml(DS.XMLConfiguration);
+                                    XmlNodeList FlagList = XML.SelectNodes("/root/flags/flag");
+                                    if (FlagList.Count == 0)
+                                        FlagList = XML.SelectNodes("/flags/flag");
+                                    bool FoundSubfield = false;
+                                    bool IsCurrentlyOffline = true;
+                                    foreach (XmlElement el in FlagList)
+                                    {
+  
+                                        for (int i = 0; i < el.Attributes.Count; i++)
+                                        {
+                                            if(el.Attributes[i].Name.ToLower().Trim()== "subfield")
+                                            {
+                                                FoundSubfield = true;
+                                                bool AlreadyOffline=false;
+                                                if (!FlagAccess.TakeDeviceOffLine(S, el.Attributes[i].Value, PluginProcess.DBSerialNumber, out AlreadyOffline))
+                                                {
+                                                    FlagAccess.FullSetAddOnly(S, el.Attributes[i].Value, DS.RoomUniqueID, DS.DeviceUniqueID, SysData.GetValue("OffLineName"), SysData.GetValue("OffLineName"), FlagChangeCodes.Changeable, PluginProcess.DBSerialNumber, FlagData.FlagChangeHistoryMaxSize, "", DS.UOMCode);
+                                                    FlagAccess.TakeDeviceOffLine(S, el.Attributes[i].Value, PluginProcess.DBSerialNumber, out AlreadyOffline);
+                                                }
+                                                if (!AlreadyOffline)
+                                                {
+                                                    PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), MODULESERIALNUMBER, 203, S + " " + el.Attributes[i].Value, DS.DeviceIdentifier + " (" + PSS.String + ") "));
+                                                    IsCurrentlyOffline = false;
+                                                }
 
+                                            }
+                                        }
+                                        if (!FoundSubfield)
+                                        {
+                                            bool AlreadyOffline = false;
+                                            if (!FlagAccess.TakeDeviceOffLine(S, "", PluginProcess.DBSerialNumber, out AlreadyOffline))
+                                            {
+                                                FlagAccess.FullSetAddOnly(S, "", DS.RoomUniqueID, DS.DeviceUniqueID, SysData.GetValue("OffLineName"), SysData.GetValue("OffLineName"), FlagChangeCodes.Changeable, PluginProcess.DBSerialNumber, FlagData.FlagChangeHistoryMaxSize, "", DS.UOMCode);
+                                                FlagAccess.TakeDeviceOffLine(S, "", PluginProcess.DBSerialNumber, out AlreadyOffline);
+                                            }
+                                            if (!AlreadyOffline)
+                                            {
+                                                IsCurrentlyOffline = false;
+                                                PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), MODULESERIALNUMBER, 203, S + " " + "", DS.DeviceIdentifier + " (" + PSS.String + ") "));
+                                            }
+                                        }
+
+                                    }
+
+                                    if(!IsCurrentlyOffline)
+                                        ActionItemsListBoxQueue.Enqueue(new Tuple<string, ListBox, string, string>(_GetCurrentTime() + " " + S + " "+ SysData.GetValue("OffLineName"), ActionItemsListBox, "", DS.DeviceUniqueID + SysData.GetValue("OffLineName")));
                                 }
-                                else
+                                catch (Exception CHMAPIEx)
                                 {
-
+                                    AddToUnexpectedErrorQueue(CHMAPIEx);
                                 }
-
                             }
 
                             if (PSS.Command == ServerPluginCommands.AddDevice)
                             {
-                                string[] FieldNames = { "UniqueID", "DeviceName", "DeviceType", "DeviceClassID", "RoomUniqueID", "InterfaceUniqueID", "DeviceIdentifier", "NativeDeviceIdentifier", "UOMCode", "Origin", "AdditionalFlagName", "HTMLDisplayName", "AFUOMCode", "DeviceGrouping", "XMLConfiguration", "UndesignatedFieldsInfo", "IntVal01", "IntVal02", "IntVal03", "IntVal04", "StrVal01", "StrVal02", "StrVal03", "StrVal04", "Comments"};
-                                string[] Values = new string[25];
+                                string[] FieldNames = { "UniqueID", "DeviceName", "DeviceType", "DeviceClassID", "RoomUniqueID", "InterfaceUniqueID", "DeviceIdentifier", "NativeDeviceIdentifier", "UOMCode", "Origin", "AdditionalFlagName", "HTMLDisplayName", "SpokenNames", "AFUOMCode", "DeviceGrouping", "XMLConfiguration", "OffLine", "UndesignatedFieldsInfo", "IntVal01", "IntVal02", "IntVal03", "IntVal04", "StrVal01", "StrVal02", "StrVal03", "StrVal04", "Comments"};
+                                string[] Values = new string[27];
                                 DeviceStruct DS = (DeviceStruct)PSS.ReferenceObject;
                                 Values[0] = DS.DeviceUniqueID;
                                 Values[1] = DS.DeviceName;
@@ -2912,24 +3432,36 @@ namespace CHM
                                 Values[09] = DS.Origin;
                                 Values[10] = DS.AdditionalFlagName;
                                 Values[11] = DS.HTMLDisplayName;
-                                Values[12] = DS.AFUOMCode;
-                                Values[13] = DS.DeviceGrouping;
-                                Values[14] = DS.XMLConfiguration;
-                                Values[15] = DS.UndesignatedFieldsInfo;
-                                Values[16] = DS.IntVal01.ToString();
-                                Values[17] = DS.IntVal02.ToString();
-                                Values[18] = DS.IntVal03.ToString();
-                                Values[19] = DS.IntVal04.ToString();
-                                Values[20] = DS.StrVal01;
-                                Values[21] = DS.StrVal02;
-                                Values[22] = DS.StrVal03;
-                                Values[23] = DS.StrVal04;
-                                Values[24] = DS.Comments;
+                                Values[12] = DS.SpokenNames;
+                                Values[13] = DS.AFUOMCode;
+                                Values[14] = DS.DeviceGrouping;
+                                Values[15] = DS.XMLConfiguration;
+                                Values[16] = DS.OffLine;
+                                Values[17] = DS.UndesignatedFieldsInfo;
+                                Values[18] = DS.IntVal01.ToString();
+                                Values[19] = DS.IntVal02.ToString();
+                                Values[20] = DS.IntVal03.ToString();
+                                Values[21] = DS.IntVal04.ToString();
+                                Values[22] = DS.StrVal01;
+                                Values[23] = DS.StrVal02;
+                                Values[24] = DS.StrVal03;
+                                Values[25] = DS.StrVal04;
+                                Values[26] = DS.Comments;
                                 MainDB.WriteRecord("Devices", FieldNames, Values);
                                 DeviceDictionary.Add(DS.DeviceUniqueID, DS.DeepCopy());
                                 IncedentFlagQueue.Enqueue(new Tuple<PluginIncedentFlags, object>(PluginIncedentFlags.NewDevice, (object)DS));
                                 PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), MODULESERIALNUMBER, 201, RoomList.Find(c => c.Item1 == DS.RoomUniqueID).Item2 + " " + DS.DeviceName + " (" + DS.DeviceUniqueID + ") ", ""));
                                 continue;
+                            }
+
+                            if(PSS.Command== ServerPluginCommands.AddToConfigurationInfo)
+                            {
+
+                                Tuple<string, string, string, string> CF = (Tuple<string, string, string, string>)PSS.ReferenceObject;
+
+                                MainDB.AddorUpdateConfiguration(PSS.Plugin, CF.Item1, CF.Item3, CF.Item4.ToCharArray()[0]);
+                                continue;
+
                             }
 
                             if (PSS.Command == ServerPluginCommands.SendAllIncedentFlags)
@@ -2988,8 +3520,9 @@ namespace CHM
                                 return;
                             TransactionCount++;
                         }
-                        catch (Exception e1)
+                        catch (Exception CHMAPIEx)
                         {
+                            AddToUnexpectedErrorQueue(CHMAPIEx);
                             break;
                         }
 
@@ -3392,7 +3925,7 @@ namespace CHM
 
             while (InternalValidData)
             {
-                RoomList.Add(Tuple.Create(Internal[0], Internal[1]));
+                RoomList.Add(Tuple.Create(Internal[0], Internal[1], Internal[2], Internal[3]));
                 InternalReader = MainDB.GetNextRecordWithReader(ref InternalReader, out Internal, out InternalValidData);
             }
             MainDB.CloseNextRecordWithReader(ref InternalReader);
@@ -3441,19 +3974,21 @@ namespace CHM
                 DeviceStructData.Origin = Device[9];
                 DeviceStructData.AdditionalFlagName = Device[10];
                 DeviceStructData.HTMLDisplayName = Device[11];
-                DeviceStructData.AFUOMCode = Device[12];
-                DeviceStructData.DeviceGrouping = Device[13];
-                DeviceStructData.XMLConfiguration = Device[14];
-                DeviceStructData.UndesignatedFieldsInfo = Device[15];
-                DeviceStructData.IntVal01 = _ConvertToInt32(Device[16]);
-                DeviceStructData.IntVal02 = _ConvertToInt32(Device[17]);
-                DeviceStructData.IntVal03 = _ConvertToInt32(Device[18]);
-                DeviceStructData.IntVal04 = _ConvertToInt32(Device[19]);
-                DeviceStructData.StrVal01 = Device[20];
-                DeviceStructData.StrVal02 = Device[21];
-                DeviceStructData.StrVal03 = Device[22];
-                DeviceStructData.StrVal04 = Device[23];
-                DeviceStructData.Comments = Device[24];
+                DeviceStructData.SpokenNames = Device[12];
+                DeviceStructData.AFUOMCode = Device[13];
+                DeviceStructData.DeviceGrouping = Device[14];
+                DeviceStructData.XMLConfiguration = Device[15];
+                DeviceStructData.OffLine = Device[16];
+                DeviceStructData.UndesignatedFieldsInfo = Device[17];
+                DeviceStructData.IntVal01 = _ConvertToInt32(Device[18]);
+                DeviceStructData.IntVal02 = _ConvertToInt32(Device[19]);
+                DeviceStructData.IntVal03 = _ConvertToInt32(Device[20]);
+                DeviceStructData.IntVal04 = _ConvertToInt32(Device[21]);
+                DeviceStructData.StrVal01 = Device[22];
+                DeviceStructData.StrVal02 = Device[23];
+                DeviceStructData.StrVal03 = Device[24];
+                DeviceStructData.StrVal04 = Device[25];
+                DeviceStructData.Comments = Device[26];
                 DeviceStructData.Local_TableLoc = -1;
                 DeviceStructData.Local_Flag1 = false;
                 DeviceStructData.Local_Flag2 = false;
@@ -3599,11 +4134,11 @@ namespace CHM
                     if (PluginName.ToLower() != SysData.GetValue("PluginTestModePluginName").ToLower())
                         return;
                 }
-                if (SysData.GetValue("UseAI") == "N")
-                {
-                    if (PluginName.ToLower() == SysData.GetValue("AIDLLName").ToLower())
-                        return;
-                }
+                //if (SysData.GetValue("UseAI") == "N")
+                //{
+                //    if (PluginName.ToLower() == SysData.GetValue("AIDLLName").ToLower())
+                //        return;
+                //}
                 var Reader = MainDB.ExecuteSQLCommandWithReader("PluginReference", "FileName='" + PluginName + "'", out ValidData);
                 Reader = MainDB.GetNextRecordWithReader(ref Reader, out SA, out ValidData);
                 MainDB.CloseNextRecordWithReader(ref Reader);
@@ -3724,6 +4259,7 @@ namespace CHM
 
                 if (PluginData.DLLType.ToLower() == "command" || PluginData.DLLType.ToLower() == "ai" || PluginData.DLLType.ToLower() == "html")
                 {
+                    PluginData.SendAllIncedentFlags = true;
                     foreach (DeviceStruct DS in DeviceDictionary.Values)
                     {
                         LDS.Enqueue(DS.DeepCopy());
@@ -3744,16 +4280,19 @@ namespace CHM
                         if (DT.ControllingDLL.ToLower() == PluginName.ToLower())
                             DTS.Enqueue(DT);
                     }
-
+                    foreach (InterfaceStruct IS in InterfaceDictionary.Values)
+                    {
+                        ISD.Enqueue(IS);
+                    }
                 }
                 else
                 {
 
                     foreach (InterfaceStruct IS in InterfaceDictionary.Values)
                     {
+                        ISD.Enqueue(IS);
                         if (IS.ControllingDLL == PluginName)
                         {
-                            ISD.Enqueue(IS);
 
                             foreach (DeviceStruct DS in DeviceDictionary.Values)
                             {
@@ -3819,7 +4358,8 @@ namespace CHM
 
                 try
                 {
-                    PluginData.PluginVersion = (string)PluginData.ServerAssemblyType.GetField("PluginVersion").GetValue(PluginData.Plugin);
+                    PluginData.PluginVersion = (string)PluginData.ServerAssemblyType.Assembly.GetName().Version.ToString();
+                    //GetGetField("Version").GetValue(PluginData.Plugin);
                     PluginData.Status = (PluginStatusStruct)PluginData.ServerAssemblyType.GetField("PluginStatus").GetValue(PluginData.Plugin);
                 }
                 catch (Exception err)
@@ -4135,30 +4675,35 @@ namespace CHM
             while (FlagAccess.GetFlagsToDisplayValues(out Flag))
             {
                 
-                S = string.Format("{0,-55}   {1}", Flag.Name + " " + Flag.SubType, Flag.Value+Flag.UOM);
+                S = string.Format("{0,-55}   {1}", Flag.Name + " " + Flag.SubType+ "\t", Flag.Value+Flag.UOM);
                 _UpdateMainGUIListBox(S, FlagBox, S.Substring(0, 55).TrimEnd(' '), Flag.UniqueID.ToString());
             }
 
             Tuple<string, string, string> FTD;
             while (FlagAccess.GetFlagsToDeleteValues(out FTD))
             {
-                S = string.Format("{0,-55}", FTD.Item1 + " " + FTD.Item2);
+                S = string.Format("{0,-55}", FTD.Item1 + " " + FTD.Item2) + "\t";
                 _UpdateMainGUIListBox("", FlagBox, S, FTD.Item3);
             }
-
-            Tuple<string, ListBox, string> OGUI;
+                        Tuple<string, ListBox, string> OGUI;
             while (OtherGUIBoxesQueue.Count > 0)
             {
                 OtherGUIBoxesQueue.TryDequeue(out OGUI);
                 _UpdateMainGUIListBox(OGUI.Item1, OGUI.Item2, OGUI.Item3, "");
             }
 
+            Tuple<string, ListBox, string, string> OGUI2;
             while (ActionItemsListBoxQueue.Count > 0)
             {
-                ActionItemsListBoxQueue.TryDequeue(out OGUI);
-                _UpdateMainGUIListBox(OGUI.Item1, OGUI.Item2, OGUI.Item3, "");
+                ActionItemsListBoxQueue.TryDequeue(out OGUI2);
+                _UpdateMainGUIListBox(OGUI2.Item1, OGUI2.Item2, OGUI2.Item3, OGUI2.Item4);
             }
 
+            while (EventsItemsListBoxQueue.Count > 0)
+            {
+                EventsItemsListBoxQueue.TryDequeue(out OGUI2);
+                _UpdateMainGUIListBox(OGUI2.Item1, OGUI2.Item2, OGUI2.Item3, OGUI2.Item4);
+            }
 
 
 
@@ -4178,7 +4723,7 @@ namespace CHM
             int selected = LB.SelectedIndex;
             int index = LB.TopIndex;
 
-            if (string.IsNullOrEmpty(whatmessage) && string.IsNullOrEmpty(ReplaceKey))
+            if (string.IsNullOrEmpty(whatmessage) && string.IsNullOrEmpty(ReplaceKey) && string.IsNullOrEmpty(TagMessage))
             {
                 LB.Items.Clear();
                 return;
@@ -4186,6 +4731,22 @@ namespace CHM
 
             LB.BeginUpdate();
             CHMListBoxItems item = new CHMListBoxItems(whatmessage, TagMessage);
+
+            if(string.IsNullOrEmpty(whatmessage) && string.IsNullOrEmpty(ReplaceKey))//Delete By Tag
+            {
+                for(index=0;index<LB.Items.Count;index++)
+                {
+                    CHMListBoxItems LBI = (CHMListBoxItems)LB.Items[index];
+                    if(LBI.Tag== TagMessage)
+                    {
+                        LB.Items.RemoveAt(index);
+                        break;
+                    }
+                }
+                LB.EndUpdate();
+                LB.Refresh();
+                return;
+            }
 
             if (string.IsNullOrEmpty(whatmessage))
             {
@@ -4501,7 +5062,7 @@ namespace CHM
                 PSD.String = ImmediateCommands.Text;
                 PSD.String4 = "Immediate";
                 PSD.ReferenceUniqueNumber = string.Format("{0:0000}-{1:0000000000}", "XXXX", NextSequencialNumber);
-                ServerToPluginQueue.Enqueue(PSD);
+ //               ServerToPluginQueue.Enqueue(PSD);
 
                 PluginStruct PluginProcess;
                 if (PluginDictionary.TryGetValue(PSD.Plugin, out PluginProcess))
@@ -4517,6 +5078,7 @@ namespace CHM
                     PendingMessageQueue.Enqueue(string.Format(MESSAGEQUEUEFORMATSTRING, _GetCurrentTick(), "00000-00000", PSD.Plugin, PSD.String, " (" + S + ") "));
                 }
             }
+            LBToClearQueue.Enqueue(ImmediateCommandsResponse);
             ImmediateCommands.Clear();
             ImmediateCommands.Focus();
         }
@@ -4544,8 +5106,8 @@ namespace CHM
 
                 CHMListBoxItems item = (CHMListBoxItems)LB.SelectedItem;
                 FlagDataStruct Flag;
-                bool b = FlagAccess.GetFlag(item.Text.Substring(0,55).Trim().ToLower(), "", out Flag);
-                String S = "Value: " + Flag.Value + " " + Flag.UOM + " Raw Value: " + Flag.RawValue + " " + Flag.UOM + "    " + Flag.LastChangeHistory.ChangedBy + " " + new DateTime(Flag.LastChangeHistory.ChangeTime).ToString() + " Value: " + Flag.LastChangeHistory.Value + " (" + Flag.LastChangeHistory.RawValue + ")\r\n" +
+                bool b = FlagAccess.GetFlag(item.Text.Substring(0,55).Trim().ToLower().Replace("\t", ""), "", out Flag);
+                String S = "Value: " + Flag.Value + " " + Flag.UOM + " Raw Value: " + Flag.RawValue + " " + Flag.UOM + "    " + Flag.ChangedBy + " " + new DateTime(Flag.ChangeTick).ToString() + " (Prev Value: " + Flag.LastChangeHistory.Value  +" "+ Flag.LastChangeHistory.RawValue + " " + new DateTime(Flag.LastChangeHistory.ChangeTime).ToString()+")\r\n" +
                     "Creation Information: " + Flag.CreatedBy + " " + new DateTime(Flag.CreateTick).ToString() + " Value: " + Flag.CreatedValue + " (" + Flag.CreatedRawValue + ")\r\n";
 
                 List<string> FlagChangeList = new List<string>();
@@ -4554,11 +5116,7 @@ namespace CHM
                     FlagChangeList.Add(Flag.ChangeHistory[i].ChangedBy + " " + new DateTime(Flag.ChangeHistory[i].ChangeTime).ToString() + " Value: " + Flag.ChangeHistory[i].Value + " (" + Flag.ChangeHistory[i].RawValue + ")");
                 }
 
-                if (Flag.ChangeHistory.Count > 1)
-                    S = S + "Previous Value: " + Flag.ChangeHistory[Flag.ChangeHistory.Count - 2].ChangedBy + " " + new DateTime(Flag.ChangeHistory[Flag.ChangeHistory.Count - 2].ChangeTime).ToString() + " Value: " + Flag.ChangeHistory[Flag.ChangeHistory.Count - 2].Value + " (" + Flag.ChangeHistory[Flag.ChangeHistory.Count - 2].RawValue + ")\r\n";
-
-
-                TB = new TimedDialogBoxWithListbox(Flag.Name + " " + Flag.SubType, S, FlagChangeList, 30);
+                TB = new TimedDialogBoxWithListbox(Flag.Name + " " + Flag.SubType, S, FlagChangeList, 30, SysData.GetValue("LogFileLocation"));
                 TB.ShowDialog();
             }
         }
@@ -4608,7 +5166,6 @@ namespace CHM
 
 
         }
-
     }
 
 
@@ -4638,20 +5195,43 @@ namespace CHM
     class PluginDirectCalls
     {
         string InstanceOwner;
-        internal DatabaseAccess MacroDB;
+        internal DatabaseAccess GeneralDB;
+
+        internal int _ConvertToInt32(string Value)
+        {
+            try
+            {
+                double x;
+                Double.TryParse(Value, out x);
+                int xx = Convert.ToInt32(x);
+                return (xx);
+
+            }
+            catch
+            {
+                return (0);
+            }
+        }
 
         public PluginDirectCalls(string PluginName)
         {
             InstanceOwner = PluginName;
-            MacroDB = new DatabaseAccess();
+            GeneralDB = new DatabaseAccess();
             string S="";
-            MacroDB.OpenMainDB(MainCHMForm.SysData.GetValue("DBLocation"), ref S, MainCHMForm.EncryptedMasterPassword);
+            GeneralDB.OpenMainDB(MainCHMForm.SysData.GetValue("DBLocation"), ref S, MainCHMForm.EncryptedMasterPassword);
         }
 
         public string ServerGetFlag(string Flag)
         {
-            FlagDataStruct PluginFlag;
+            if (Flag.Substring(0, 2) == "$$")
+            {
+                string SV, RV;
+                MainCHMForm.FlagData FD = new MainCHMForm.FlagData();
+                FD.GetSpecialFlagInfo(Flag, out SV, out RV);
+                return (SV);
+            }
 
+            FlagDataStruct PluginFlag;
             if (MainCHMForm.FlagData.FlagDataDictionary.TryGetValue(Flag.ToLower(), out PluginFlag))
                 return (PluginFlag.Value);
             return ("");
@@ -4676,6 +5256,15 @@ namespace CHM
                     continue;
 
                 }
+                if (ListOfFlags[i].Substring(0, 2) == "$$")
+                {
+                    string SV, RV;
+                    MainCHMForm.FlagData FD = new MainCHMForm.FlagData();
+                    FD.GetSpecialFlagInfo(ListOfFlags[i], out SV, out RV);
+                    FlagValues[i] = new Tuple<string, string, string>(SV, RV, "");
+                    continue;
+                }
+
                 if (!MainCHMForm.FlagData.FlagDataDictionary.TryGetValue(ListOfFlags[i].ToLower(), out PluginFlag))
                 {
                     FlagValues[i] = new Tuple<string, string, string>("", "", "");
@@ -4708,13 +5297,33 @@ namespace CHM
             return (NF);
         }
 
+        public Tuple<string, string, string> GetAutomation(string AutomationName, string AutomationType)
+        {
+            string[] Fields = new string[] { "AutomationProcessName", "AutomationProcessType" };
+            string[] Values = new string[] { AutomationName, AutomationType};
+            bool ValidData;
+            string[] AutomationData;
+
+
+            var Reader = GeneralDB.ExecuteSQLCommandWithReader("AutomationProcesses", Fields, Values, out ValidData);
+            if (ValidData)
+            {
+                Reader = GeneralDB.GetNextRecordWithReader(ref Reader, out AutomationData, out ValidData);
+                if (ValidData)
+                {
+                    return (new Tuple<string, string, string>(AutomationData[2], AutomationData[3], AutomationData[4]));
+                }
+            }
+            return (null);
+        }
+
         public string GetMacro(string MacroName, string MacroType, string MacroOwner)
         {
             string ReturnValue;
             string [] Fields = new string[] { "MacroName","MacroType","MacroOwner"};
             string[] Values = new string[] { MacroName, MacroType, MacroOwner };
 
-            MacroDB.GetItemByFieldsIntoString("Macros", Fields, Values, "MacroXML", out ReturnValue);
+            GeneralDB.GetItemByFieldsIntoString("Macros", Fields, Values, "MacroXML", out ReturnValue);
             return (ReturnValue);
 
         }
@@ -4740,6 +5349,87 @@ namespace CHM
             return (false);
         }
 
+        public bool GetDeviceFromDB(string UniqueID, ref DeviceStruct DS, ref RoomStruct Room)
+        {
+            //bool DeviceValidData;
+
+            if (MainCHMForm.DeviceDictionary.TryGetValue(UniqueID, out DS))
+            {
+                string Q = DS.RoomUniqueID;
+                Tuple<string, string, string, string> S = MainCHMForm.RoomList.Find(c => c.Item1 == Q);
+                Room.UniqueID = S.Item1;
+                Room.RoomName = S.Item2;
+                Room.Location = S.Item3;
+                Room.InterfaceUniqueIDs = S.Item4;
+                return (true);
+            }
+            return (false);
+            
+            //string[] Device;
+
+            //var DeviceReader = MacroDB.ExecuteSQLCommandWithReader("Devices", "UniqueID='"+ UniqueID+"'", out DeviceValidData);
+            //DeviceReader = MacroDB.GetNextRecordWithReader(ref DeviceReader, out Device, out DeviceValidData);
+            //if (!DeviceValidData)
+            //{
+            //    MacroDB.CloseNextRecordWithReader(ref DeviceReader);
+            //    return (false);
+            //}
+            //else
+            //{
+            //    DS.DeviceUniqueID = Device[0];
+            //    DS.DeviceName = Device[1];
+            //    DS.DeviceType = Device[2];
+            //    DS.DeviceClassID = Device[3];
+            //    DS.RoomUniqueID = Device[4];
+            //    DS.InterfaceUniqueID = Device[5];
+            //    DS.DeviceIdentifier = Device[6];
+            //    DS.NativeDeviceIdentifier = Device[7];
+            //    DS.UOMCode = Device[8];
+            //    DS.Origin = Device[9];
+            //    DS.AdditionalFlagName = Device[10];
+            //    DS.HTMLDisplayName = Device[11];
+            //    DS.AFUOMCode = Device[12];
+            //    DS.DeviceGrouping = Device[13];
+            //    DS.XMLConfiguration = Device[14];
+            //    DS.IgnoreOffLineWarning = Device[15];
+            //    DS.UndesignatedFieldsInfo = Device[16];
+            //    DS.IntVal01 = _ConvertToInt32(Device[17]);
+            //    DS.IntVal02 = _ConvertToInt32(Device[18]);
+            //    DS.IntVal03 = _ConvertToInt32(Device[19]);
+            //    DS.IntVal04 = _ConvertToInt32(Device[20]);
+            //    DS.StrVal01 = Device[21];
+            //    DS.StrVal02 = Device[22];
+            //    DS.StrVal03 = Device[23];
+            //    DS.StrVal04 = Device[24];
+            //    DS.Comments = Device[25];
+            //    DS.Local_TableLoc = -1;
+            //    DS.Local_Flag1 = false;
+            //    DS.Local_Flag2 = false;
+            //    DS.Local_IsLocalDevice = false;
+            //    DS.Local_CommandStatementIgnore = "";
+            //    DS.Local_OriginalInfo = "";
+
+            //    MacroDB.GetBlobFieldByReader(DeviceReader, "ObjVal", out DS.objVal);
+            //    MacroDB.CloseNextRecordWithReader(ref DeviceReader);
+
+            //    string[] Internal;
+            //    bool InternalValidData;
+
+            //    var InternalReader = MacroDB.ExecuteSQLCommandWithReader("Rooms", "UniqueID='" + DS.RoomUniqueID + "'", out InternalValidData);
+            //    InternalReader = MacroDB.GetNextRecordWithReader(ref InternalReader, out Internal, out InternalValidData);
+
+            //    if (InternalValidData)
+            //    {
+            //        Room.UniqueID = Internal[0];
+            //        Room.RoomName = Internal[1];
+            //        Room.Location = Internal[2];
+            //        Room.InterfaceUniqueIDs = Internal[3];
+            //        Room.AIProcessCode = Internal[4];
+            //    }
+            //    MacroDB.CloseNextRecordWithReader(ref InternalReader);
+            //}
+            //return (true);
+        }
 
     }
     #endregion
@@ -4773,6 +5463,7 @@ namespace CHM
                 return (0);
             }
         }
+
         internal DeviceMenuStuff(MainCHMForm MCH)
         {
             MCH_Form = MCH;
@@ -4931,7 +5622,7 @@ namespace CHM
             DeviceSelectForm DevForm = (DeviceSelectForm)btn.Parent;
 
 
-            if (btn.Name == "RBAll" || btn.Name == "RBDevices" || btn.Name == "RBSensors")
+            if (btn.Name == "RBAll" || btn.Name == "RBDevices" || btn.Name == "RBSensors" || btn.Name == "RBSetable")
                 return;
 
             if (btn.Name == "Cancel")
@@ -5118,7 +5809,10 @@ namespace CHM
                         MHeight = 0;
                         DisplayDeviceValue(ref groupBox1, Flag, DV, DevicesSelectionMode, ref max, ref MHeight, ref size);
                     }
-
+                    if(groupBox1.Controls.Count==0)
+                    {
+                        continue;
+                    }
 
                     groupBox1.Location = new Point(5, index);
                     groupBox1.Size = new Size(max, MHeight + 10);
@@ -5199,127 +5893,160 @@ namespace CHM
 
             XmlDocument XML = new XmlDocument();
             PluginCommunicationStruct PCS = new PluginCommunicationStruct();
+            int ValidCommand = 0;
+            bool HasSettableControl = false;
             try
             {
-                //if (DV.Local_CommandStatementIgnore == "Y")
-                //    throw new XmlException();
-
-
-                XML.LoadXml(DV.XMLConfiguration);
-                XmlNodeList CommandList = XML.SelectNodes("/root/commands/command");
-                if (CommandList.Count == 0)
-                    CommandList = XML.SelectNodes("/commands/command");
-
-                bool ThisIsAValidSubfield = false;
-                int ValidCommand = 0;
-                foreach (XmlElement el in CommandList)
+                if (!string.IsNullOrEmpty(DV.XMLConfiguration))
                 {
-                    string State = "", SubField = null, RangeStart="", RangeEnd="", FlagValueToUse="";
-                    for (int i = 0; i < el.Attributes.Count; i++)
+                    XML.LoadXml(DV.XMLConfiguration);
+                    XmlNodeList CommandList = XML.SelectNodes("/root/commands/command");
+                    if (CommandList.Count == 0)
+                        CommandList = XML.SelectNodes("/commands/command");
+
+                    bool ThisIsAValidSubfield = false;
+                    bool RangeEqual = false;
+                    string SpecialRangeEqual = "";
+
+                    foreach (XmlElement el in CommandList)
                     {
-                        if (el.Attributes[i].Name.ToLower() == "state")
+                        string State = "", SubField = null, RangeStart = "", RangeEnd = "", FlagValueToUse = "";
+                        for (int i = 0; i < el.Attributes.Count; i++)
                         {
-                            State = el.Attributes[i].Value;
-                            ValidCommand = 2;
+                            if (el.Attributes[i].Name.ToLower() == "state")
+                            {
+                                State = el.Attributes[i].Value;
+                                ValidCommand = 2;
+                            }
+
+                            if (el.Attributes[i].Name.ToLower() == "subfield")
+                            {
+                                SubField = el.Attributes[i].Value.ToLower();
+                            }
+
+                            if (el.Attributes[i].Name.ToLower() == "rangestart")
+                            {
+                                RangeStart = el.Attributes[i].Value;
+                                ValidCommand++;
+                            }
+
+                            if (el.Attributes[i].Name.ToLower() == "rangeend")
+                            {
+                                RangeEnd = el.Attributes[i].Value;
+                                ValidCommand++;
+                            }
+
+                            if (el.Attributes[i].Name.ToLower() == "flagvaluetouse")
+                            {
+                                FlagValueToUse = el.Attributes[i].Value;
+                            }
                         }
 
-                        if (el.Attributes[i].Name.ToLower() == "subfield")
+                        if (RangeStart == RangeEnd && !string.IsNullOrEmpty(RangeStart))
                         {
-                            SubField = el.Attributes[i].Value.ToLower();
+                            RangeEqual = true;
+                            SpecialRangeEqual = RangeStart;
+                            continue;
                         }
 
-                        if (el.Attributes[i].Name.ToLower() == "rangestart")
+                        if (ValidCommand >= 2 && (SubField == null || SubField == Flag.SubType.ToLower())) //A Valid Choice
                         {
-                            RangeStart = el.Attributes[i].Value;
-                            ValidCommand++;
-                        }
+                            ThisIsAValidSubfield = true;
+                            if (RangeStart != "" && RangeEnd != "") //Range Value
+                            {
+                                TrackBar TB = new TrackBar();
+                                Label LB = new Label();
+                                TB.Tag = new Tuple<string, Label, string>(DV.DeviceUniqueID, LB, SubField);
+                                TB.Minimum = _ConvertToInt32(RangeStart);
+                                TB.Maximum = _ConvertToInt32(RangeEnd);
+                                if(RangeEqual)
+                                {
+                                    int r =_ConvertToInt32(SpecialRangeEqual);
+                                    if (r < TB.Minimum)
+                                        TB.Minimum = r;
+                                    if (r > TB.Maximum)
+                                        TB.Maximum = r;
+                                }
+                                MHeight = Math.Max(MHeight, TB.Height);
+                                groupBox1.Controls.Add(TB);
+                                HasSettableControl = true;
+                                TB.Location = new Point(max, 10);
+                                TB.TabStop = false;
+                                max = max + TB.Width + 5;
+                                groupBox1.Controls.Add(LB);
+                                LB.Width = 50;
+                                LB.Location = new Point(max, 10);
+                                LB.TabStop = false;
+                                max = max + LB.Width + 5;
 
-                        if (el.Attributes[i].Name.ToLower() == "rangeend")
-                        {
-                            RangeEnd = el.Attributes[i].Value;
-                            ValidCommand++;
-                        }
 
-                        if (el.Attributes[i].Name.ToLower() == "flagvaluetouse")
-                        {
-                            FlagValueToUse = el.Attributes[i].Value;
+
+                                if (FlagValueToUse == "RawValue")
+                                    TB.Value = _ConvertToInt32(Flag.RawValue);
+                                else
+                                    TB.Value = _ConvertToInt32(Flag.Value);
+                                TB.Scroll += new EventHandler(TrackBarScroll);
+                                TB.MouseUp += new MouseEventHandler(TrackBarMouseUp);
+                                LB.Text = "" + TB.Value;
+                            }
+                            else
+                            {
+                                RadioButton RB = new RadioButton();
+                                RB.Text = State;
+                                RB.Tag = new Tuple<string, string, string>(DV.DeviceUniqueID, RB.Text, SubField);
+                                MHeight = Math.Max(MHeight, RB.Height);
+                                groupBox1.Controls.Add(RB);
+                                HasSettableControl = true;
+                                RB.Location = new Point(max, 10);
+                                RB.TabStop = false;
+                                max = max + RB.Width + 5;
+                                if (RB.Text == Flag.Value)
+                                    RB.Checked = true;
+                                else
+                                    RB.Checked = false;
+                                RB.CheckedChanged += new EventHandler(DisplayDeviceradioButtonsCheckedChanged);
+                            }
                         }
                     }
-
-                    if (ValidCommand>=2 && (SubField==null || SubField==Flag.SubType.ToLower())) //A Valid Choice
+                    if (DevicesSelectionMode == "RBSetable" && !HasSettableControl)
                     {
-                        ThisIsAValidSubfield = true;
-                        if (RangeStart != "" && RangeEnd != "") //Range Value
-                        {
-                            TrackBar TB = new TrackBar();
-                            Label LB = new Label();
-                            TB.Tag = new Tuple<string, Label, string>(DV.DeviceUniqueID,LB,SubField);
-                            TB.Minimum = _ConvertToInt32(RangeStart);
-                            TB.Maximum = _ConvertToInt32(RangeEnd);
-                            MHeight = Math.Max(MHeight, TB.Height);
-                            groupBox1.Controls.Add(TB);
-                            TB.Location = new Point(max, 10);
-                            TB.TabStop = false;
-                            max = max + TB.Width + 5;
-                            groupBox1.Controls.Add(LB);
-                            LB.Width = 50;
-                            LB.Location = new Point(max, 10);
-                            LB.TabStop = false;
-                            max = max + LB.Width + 5;
+                        groupBox1.Controls.Clear();
+                        return;
+                    }
 
+                    if ((DevicesSelectionMode == "RBSensors" && CommandList.Count > 0) || CommandList.Count == 0 || !ThisIsAValidSubfield)
+                    {
+                        TextBox TBV = new TextBox();
+                        TBV.Text = Flag.Value + Flag.UOM;
+                        size = TextRenderer.MeasureText(TBV.Text, TBV.Font);
+                        MHeight = Math.Max(MHeight, TBV.Height);
+                        TBV.Width = size.Width;
+                        //TBV.Height = MHeight;
+                        TBV.ReadOnly = true;
+                        TBV.BorderStyle = System.Windows.Forms.BorderStyle.None;
+                        TBV.Tag = DV.DeviceUniqueID;
+                        groupBox1.Controls.Add(TBV);
+                        TBV.Location = new Point(max, 10);
+                        TBV.TabStop = false;
+                        max = max + TBV.Width + 5;
+                        return;
 
-
-                            if (FlagValueToUse == "RawValue")
-                                TB.Value = _ConvertToInt32(Flag.RawValue);
-                            else
-                              TB.Value= _ConvertToInt32(Flag.Value);
-                            TB.Scroll += new EventHandler(TrackBarScroll);
-                            TB.MouseUp += new MouseEventHandler(TrackBarMouseUp);
-                            LB.Text = "" + TB.Value;
-                        }
-                        else
-                        {
-                            RadioButton RB = new RadioButton();
-                            RB.Text = State;
-                            RB.Tag = new Tuple<string, string, string>(DV.DeviceUniqueID, RB.Text, SubField);
-                            MHeight = Math.Max(MHeight, RB.Height);
-                            groupBox1.Controls.Add(RB);
-                            RB.Location = new Point(max, 10);
-                            RB.TabStop = false;
-                            max = max + RB.Width + 5;
-                            if (RB.Text == Flag.Value)
-                                RB.Checked = true;
-                            else
-                                RB.Checked = false;
-                            RB.CheckedChanged += new EventHandler(DisplayDeviceradioButtonsCheckedChanged);
-                        }
                     }
                 }
-
-
-                if ((DevicesSelectionMode == "RBSensors" && CommandList.Count > 0) || CommandList.Count==0 || !ThisIsAValidSubfield)
+                if (DevicesSelectionMode == "RBSetable" && !HasSettableControl)
                 {
-                    TextBox TBV = new TextBox();
-                    TBV.Text = Flag.Value + Flag.UOM;
-                    size = TextRenderer.MeasureText(TBV.Text, TBV.Font);
-                    MHeight = Math.Max(MHeight, TBV.Height);
-                    TBV.Width = size.Width;
-                    //TBV.Height = MHeight;
-                    TBV.ReadOnly = true;
-                    TBV.BorderStyle = System.Windows.Forms.BorderStyle.None;
-                    TBV.Tag = DV.DeviceUniqueID;
-                    groupBox1.Controls.Add(TBV);
-                    TBV.Location = new Point(max, 10);
-                    TBV.TabStop = false;
-                    max = max + TBV.Width + 5;
+                    groupBox1.Controls.Clear();
                     return;
-
                 }
-
-
-             }
+            }
             catch
             {
+                if (DevicesSelectionMode == "RBSetable" && !HasSettableControl)
+                {
+                    groupBox1.Controls.Clear();
+                    return;
+                }
+
                 if (DevicesSelectionMode == "RBDevices")
                     return;
                 TextBox TBV = new TextBox();
@@ -5349,11 +6076,11 @@ namespace CHM
             string Dev = tp.Item1;
             PluginCommunicationStruct PCS = new PluginCommunicationStruct();
             DateTime CT = MainCHMForm._GetCurrentDateTime();
-            PCS.Command = PluginCommandsToPlugins.DirectCommand;
+            PCS.Command = PluginCommandsToPlugins.ProcessCommandWords;
             PCS.DeviceUniqueID = Dev;
             PCS.String = Dev;
             PCS.String2 = trackbar.Value.ToString();
-            PCS.String3 = tp.Item3;
+            PCS.String5 = tp.Item3;
             PCS.UniqueNumber = string.Format("{0:0000}-{1:0000000000}", "XXXX", MainCHMForm.NextSequencialNumber);
             PCS.OriginPlugin = MainCHMForm.MODULESERIALNUMBER;
             bool fl0 = MainCHMForm.DeviceDictionary.TryGetValue(Dev, out DS);
@@ -5397,11 +6124,11 @@ namespace CHM
             Tuple<string, string, string> tp = (Tuple<string, string, string>)radioButton.Tag;
             PluginCommunicationStruct PCS = new PluginCommunicationStruct();
             DateTime CT = MainCHMForm._GetCurrentDateTime();
-            PCS.Command = PluginCommandsToPlugins.DirectCommand;
+            PCS.Command = PluginCommandsToPlugins.ProcessCommandWords;
             PCS.DeviceUniqueID = tp.Item1;
             PCS.String = tp.Item1; 
             PCS.String2 = radioButton.Text;
-            PCS.String3 = tp.Item3;
+            PCS.String5 = tp.Item3;
             PCS.UniqueNumber = string.Format("{0:0000}-{1:0000000000}", "XXXX", MainCHMForm.NextSequencialNumber);
             PCS.OriginPlugin = MainCHMForm.MODULESERIALNUMBER;
             bool fl0 = MainCHMForm.DeviceDictionary.TryGetValue(tp.Item1, out DS);
